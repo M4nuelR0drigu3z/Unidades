@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Border, Side
+from openpyxl.drawing.image import Image
 
 # ----------------------------------------------------------------------
 # CARGAR .env
@@ -165,12 +166,16 @@ def main():
             if speed == 0 and not ecu:
                 continue
             status = "DETENIDO" if (speed == 0 and ecu) else "RUTA"
-            location = gps.get("reverseGeo", {}).get("formattedLocation") or \
-                       f"Lat: {gps.get('latitude')}, Lon: {gps.get('longitude')}"
+            location = gps.get("reverseGeo", {}).get("formattedLocation")
+                       
+            lat_long = f"{gps.get('latitude')},{gps.get('longitude')}"
+                       
+        
             results.append({
                 "Unidad":    u.get("name", "Sin nombre"),
                 "Ubicación": location,
-                "Estatus":   status
+                "Estatus":   status,
+                "Coordenadas": lat_long,
             })
         except Exception:
             logging.exception(f"Procesando unidad {u.get('name')}")
@@ -180,14 +185,14 @@ def main():
     ws = wb.active
 
     # 6.1) Deshacer merges en filas >= 7
-    start_row = 7
+    start_row = 8
     for mr in list(ws.merged_cells.ranges):
         if mr.min_row >= start_row:
             ws.unmerge_cells(str(mr))
 
     # 6.2) Fecha y hora
-    ws["C2"] = now_mx.date().isoformat()
-    ws["F2"] = now_mx.strftime("%H:%M:%S")
+    ws["C3"] = now_mx.date().isoformat()
+    ws["F3"] = now_mx.strftime("%H:%M:%S")
 
     # 6.3) Preparar estilos
     thin = Side(border_style="thin", color="000000")
@@ -203,15 +208,9 @@ def main():
         # Unidad
         cell_u = ws.cell(row=i, column=1, value=row["Unidad"])
         cell_u.border = border
-
-        # Ubicación
-        ws.merge_cells(start_row=i, start_column=2, end_row=i, end_column=8)
-        for col in range(2, 9):
-            cell_loc = ws.cell(row=i, column=col, value=row["Ubicación"] if col==2 else None)
-            cell_loc.border = border
-
+        
         # Estatus
-        cell_s = ws.cell(row=i, column=9, value=row["Estatus"])
+        cell_s = ws.cell(row=i, column=2, value=row["Estatus"])
         cell_s.border = border
         if row["Estatus"] == "DETENIDO":
             cell_s.fill = red_fill
@@ -220,13 +219,36 @@ def main():
             cell_s.fill = green_fill
             cell_s.font = green_font
 
+        # Ubicación
+        ws.merge_cells(start_row=i, start_column=3, end_row=i, end_column=9)
+        for col in range(3, 9):
+            cell_loc = ws.cell(row=i, column=col, value=row["Ubicación"] if col==3 else None)
+            cell_loc.border = border
+        
+        # Coordenadas
+        cell_c = ws.cell(row=i, column=10, value=row["Coordenadas"])
+        cell_c.border = border 
+        
+
+
     # 6.5) Conteo dinámico en H2
     last_row = start_row + len(results) - 1
-    ws["H2"] = f"=COUNTA(A{start_row}:A{last_row})"
+    ws["H3"] = f"=COUNTA(A{start_row}:A{last_row})"
 
     # 6.6) Guardar archivo nuevo
     ts_str        = now_mx.strftime("%Y-%m-%d_%H-%M-%S")
     nuevo_archivo = base_dir / f"Reporte de estatus de unidades {ts_str}.xlsx"
+    img_path     = base_dir / "mercadolibre_logo.png"
+    logo = Image(img_path)
+    heights = [
+        ws.row_dimensions[i].height  or ws.sheet_format.defaultRowHeight
+        for i in ( 2,3,4)
+    ]
+    total_pts = sum(heights)
+    total_px = int (total_pts * 1.333)
+    
+    logo.height = total_px
+    ws.add_image(logo, "A2")
     wb.save(nuevo_archivo)
     logging.info(f"Excel generado: {nuevo_archivo}")
 
@@ -254,13 +276,13 @@ def main():
         sys.exit(1)
         
     # 8) Enviar por WhatsApp
-    for destino in DESTINOS:
-        try:
-            media_id = subir_media(str(nuevo_archivo))
-            enviar_template(media_id, destino, str(nuevo_archivo))
-        except Exception:
-            logging.exception(f"Error enviando WhatsApp a {destino}")
-            sys.exit(1)
+    # for destino in DESTINOS:
+    #     try:
+    #         media_id = subir_media(str(nuevo_archivo))
+    #         enviar_template(media_id, destino, str(nuevo_archivo))
+    #     except Exception:
+    #         logging.exception(f"Error enviando WhatsApp a {destino}")
+    #         sys.exit(1)
     # ) Eliminar archivo
     try:
         os.remove(str(nuevo_archivo))
