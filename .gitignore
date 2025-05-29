@@ -1,6 +1,7 @@
+
 /DataUnitsLocation.py
 /DVIR.py
 /EnvioMensaje.py
 /EnvioUnico.py
 /reporte_logs.log
-/.env
+.env
