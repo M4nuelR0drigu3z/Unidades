@@ -276,14 +276,14 @@ def main():
         sys.exit(1)
         
     # 8) Enviar por WhatsApp
-    # for destino in DESTINOS:
-    #     try:
-    #         media_id = subir_media(str(nuevo_archivo))
-    #         enviar_template(media_id, destino, str(nuevo_archivo))
-    #     except Exception:
-    #         logging.exception(f"Error enviando WhatsApp a {destino}")
-    #         sys.exit(1)
-    # ) Eliminar archivo
+    for destino in DESTINOS:
+        try:
+            media_id = subir_media(str(nuevo_archivo))
+            enviar_template(media_id, destino, str(nuevo_archivo))
+        except Exception:
+            logging.exception(f"Error enviando WhatsApp a {destino}")
+            sys.exit(1)
+    # 9) Eliminar archivo
     try:
         os.remove(str(nuevo_archivo))
         logging.info(f"Archivo eliminado: {nuevo_archivo.name}")
