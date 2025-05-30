@@ -11,7 +11,7 @@ import smtplib
 from dotenv import load_dotenv
 from pathlib import Path
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Font, Border, Side
+from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.drawing.image import Image
 
 # ----------------------------------------------------------------------
@@ -104,7 +104,7 @@ def main():
         sys.exit(1)
 
     base_dir       = Path(__file__).parent
-    plantilla_path = base_dir / "Plantilla.xlsx"
+    plantilla_path = base_dir / "PlantillaML.xlsx"
 
     # IDs predefinidas
     predefined_special = {
@@ -204,14 +204,18 @@ def main():
     red_font   = Font(color="9C0006")    # rojo oscuro
 
     # 6.4) Volcar datos, fusionar Ubicación C–H, aplicar estilo y bordes
+    center_al = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    
     for i, row in enumerate(results, start=start_row):
         # Unidad
         cell_u = ws.cell(row=i, column=1, value=row["Unidad"])
         cell_u.border = border
+        cell_u.alignment = center_al
         
         # Estatus
         cell_s = ws.cell(row=i, column=2, value=row["Estatus"])
         cell_s.border = border
+        cell_s.alignment = center_al
         if row["Estatus"] == "DETENIDO":
             cell_s.fill = red_fill
             cell_s.font = red_font
@@ -221,36 +225,37 @@ def main():
 
         # Ubicación
         ws.merge_cells(start_row=i, start_column=3, end_row=i, end_column=9)
-        for col in range(3, 9):
+        for col in range(3, 10):
             cell_loc = ws.cell(row=i, column=col, value=row["Ubicación"] if col==3 else None)
             cell_loc.border = border
-        
+            cell_loc.alignment = center_al
         # Coordenadas
         cell_c = ws.cell(row=i, column=10, value=row["Coordenadas"])
         cell_c.border = border 
-        
-
-
+        cell_c.alignment = center_al
     # 6.5) Conteo dinámico en H2
     last_row = start_row + len(results) - 1
     ws["H3"] = f"=COUNTA(A{start_row}:A{last_row})"
 
     # 6.6) Guardar archivo nuevo
-    ts_str        = now_mx.strftime("%Y-%m-%d_%H-%M-%S")
-    nuevo_archivo = base_dir / f"Reporte de estatus de unidades {ts_str}.xlsx"
+    ws.column_dimensions['A'].width = 15  # ~110px (ajusta si es necesario)
+    ws.row_dimensions[2].height = 15     # 45pt = ~60px
+    ws.row_dimensions[3].height = 15
+    ws.row_dimensions[4].height = 15
+
+    # Crear la imagen y ajustar tamaño
     img_path     = base_dir / "mercadolibre_logo.png"
     logo = Image(img_path)
-    heights = [
-        ws.row_dimensions[i].height  or ws.sheet_format.defaultRowHeight
-        for i in ( 2,3,4)
-    ]
-    total_pts = sum(heights)
-    total_px = int (total_pts * 1.333)
-    
-    logo.height = total_px
+    logo.width = 125    # Ancho total que ocupará (ajusta si el logo es más chico/largo)
+    logo.height = 60   # Suma del alto de las 3 filas (45*3)
     ws.add_image(logo, "A2")
+
+    # 6.6) Guardar archivo nuevo
+    ts_str        = now_mx.strftime("%Y-%m-%d_%H-%M-%S")
+    nuevo_archivo = base_dir / f"Reporte de estatus de unidades {ts_str}.xlsx"
     wb.save(nuevo_archivo)
     logging.info(f"Excel generado: {nuevo_archivo}")
+
 
     # 7) Enviar por correo
     try:
