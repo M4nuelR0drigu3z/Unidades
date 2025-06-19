@@ -26,7 +26,7 @@ load_dotenv(dotenv_path=env_path)
 # Credenciales y configuración
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
-DESTINOS = os.getenv("WHATSAPP_DESTINOS", "").split(",")
+DESTINOS = [d.strip() for d in os.getenv("WHATSAPP_DESTINOS", "").split(",") if d.strip()]
 
 SAMSARA_API_TOKEN = os.getenv("SAMSARA_API_TOKEN")
 
