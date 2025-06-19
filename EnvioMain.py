@@ -13,6 +13,9 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.drawing.image import Image
+import gspread
+from gspread_dataframe import get_as_dataframe
+from pathlib import Path
 
 # ----------------------------------------------------------------------
 # CARGAR .env
@@ -21,33 +24,34 @@ load_dotenv(dotenv_path=env_path)
 
 # ----------------------------------------------------------------------
 # Credenciales y configuración
-PHONE_NUMBER_ID   = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-ACCESS_TOKEN      = os.getenv("WHATSAPP_ACCESS_TOKEN")
-DESTINOS          = os.getenv("WHATSAPP_DESTINOS", "").split(",")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
+DESTINOS = os.getenv("WHATSAPP_DESTINOS", "").split(",")
 
 SAMSARA_API_TOKEN = os.getenv("SAMSARA_API_TOKEN")
 
-SMTP_HOST         = os.getenv("SMTP_HOST", "smtp.example.com")
-SMTP_PORT         = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER         = os.getenv("SMTP_USER")
-SMTP_PASSWORD     = os.getenv("SMTP_PASSWORD")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.example.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
-TEMPLATE_NAME     = os.getenv("TEMPLATE_NAME", "reporte")
-LANG_CODE         = os.getenv("LANG_CODE", "es_MX")
-MX_TZ             = "America/Mexico_City"
+TEMPLATE_NAME = os.getenv("TEMPLATE_NAME", "reporte")
+LANG_CODE = os.getenv("LANG_CODE", "es_MX")
+MX_TZ = "America/Mexico_City"
 
 # ----------------------------------------------------------------------
 # Logging
 logging.basicConfig(
     filename="reporte_logs.log",
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
 # ----------------------------------------------------------------------
 # WhatsApp setup
 BASE_URL = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}"
-HEADERS  = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+
 
 def subir_media(path: str) -> str:
     with open(path, "rb") as f:
@@ -55,15 +59,16 @@ def subir_media(path: str) -> str:
             "file": (
                 os.path.basename(path),
                 f,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
-            "messaging_product": (None, "whatsapp")
+            "messaging_product": (None, "whatsapp"),
         }
         r = requests.post(f"{BASE_URL}/media", headers=HEADERS, files=files)
         r.raise_for_status()
         media_id = r.json()["id"]
         logging.info(f"Media subido, media_id: {media_id}")
         return media_id
+
 
 def enviar_template(media_id: str, to: str, excel_path: str):
     payload = {
@@ -81,13 +86,13 @@ def enviar_template(media_id: str, to: str, excel_path: str):
                             "type": "document",
                             "document": {
                                 "id": media_id,
-                                "filename": os.path.basename(excel_path)
-                            }
+                                "filename": os.path.basename(excel_path),
+                            },
                         }
-                    ]
+                    ],
                 }
-            ]
-        }
+            ],
+        },
     }
     headers = {**HEADERS, "Content-Type": "application/json"}
     r = requests.post(f"{BASE_URL}/messages", json=payload, headers=headers)
@@ -95,6 +100,86 @@ def enviar_template(media_id: str, to: str, excel_path: str):
     msg_id = r.json()["messages"][0]["id"]
     logging.info(f"Template enviado a {to}, message ID: {msg_id}")
 
+
+def obtener_datos_google_sheets(results, fecha_busqueda):
+
+    base_dir = Path(__file__).parent
+    gc = gspread.service_account(filename=base_dir / "credenciales.json")
+    sh = gc.open_by_url(
+        "https://docs.google.com/spreadsheets/d/1zbVe4Rk7aGaC_gyy0n2ik5VEWzn3w6XAyn91LNp2cMA/edit#gid=0"
+    )
+
+    # Determinar el nombre de la hoja según la fecha (mes/año
+    meses_es = {
+        1: "ENERO",
+        2: "FEBRERO",
+        3: "MARZO",
+        4: "ABRIL",
+        5: "MAYO",
+        6: "JUNIO",
+        7: "JULIO",
+        8: "AGOSTO",
+        9: "SEPTIEMBRE",
+        10: "OCTUBRE",
+        11: "NOVIEMBRE",
+        12: "DICIEMBRE",
+    }
+    mes = meses_es[fecha_busqueda.month]
+    anio = str(fecha_busqueda.year)[-2:]  # "25"
+    sheet_name = f"{mes} {anio}"
+    worksheet = sh.worksheet(sheet_name)
+    df = get_as_dataframe(worksheet, evaluate_formulas=True)
+    df = df.fillna("")  # Limpia NaNs
+
+    dia = fecha_busqueda.day
+    mes = fecha_busqueda.strftime("%b").lower()
+    anio = fecha_busqueda.strftime("%y")
+    fecha_excel = f"{dia}-{mes}-{anio}"
+    fecha_excel_alt = fecha_busqueda.strftime("%d-%b-%y").lower()
+
+    # Definir nombres de columnas
+    col_fecha = "FECHA DE INICIO"
+    col_unidad = "UNIDAD"
+    col_roster = "ROSTERING \nID"
+    col_origen = "Origen 0"
+    col_destino = "Destino"
+    col_placas = "PLACAS"
+
+    # Filtrar filas por fecha, ignorando mayúsculas/minúsculas y ceros
+    filas_fecha = df[
+        df[col_fecha].astype(str).str.lower().isin([fecha_excel, fecha_excel_alt])
+    ]
+
+    for row in results:
+        unidad = str(row.get("Unidad", "")).strip()
+        # Busca en las filas filtradas por fecha, aquellas con la unidad
+        
+        coincidencia = filas_fecha[
+            filas_fecha[col_unidad].astype(str).str.strip() == unidad
+        ]
+        if not coincidencia.empty:
+            fila = coincidencia.iloc[0]
+            row["ID ROSTERING"] = fila.get(col_roster, "")
+            row["ORIGEN"] = fila.get(col_origen, "")
+            row["DESTINO"] = fila.get(col_destino, "")
+            row["PLACAS"] = fila.get(col_placas, "")
+            geocerca = row.get("Geocerca", "").strip()
+            Origen_0 = str(fila.get(col_origen, "")).strip()
+            destino = str(fila.get(col_destino, "")).strip()
+            if geocerca:
+                if geocerca == Origen_0:
+                    row["Estatus"] = "EN ORIGEN"
+                elif geocerca == destino:
+                    row["Estatus"] = "EN DESTINO"
+        else:
+            row["ID ROSTERING"] = ""
+            row["ORIGEN"] = ""
+            row["DESTINO"] = ""
+            row["PLACAS"] = ""
+    return results
+
+
+# ----------------------------------------------------------------------
 def main():
     logging.info("===> Inicio de ejecución")
 
@@ -103,33 +188,46 @@ def main():
         logging.error("❌ Falta SAMSARA_API_TOKEN en variables de entorno")
         sys.exit(1)
 
-    base_dir       = Path(__file__).parent
+    base_dir = Path(__file__).parent
     plantilla_path = base_dir / "PlantillaML.xlsx"
 
     # IDs predefinidas
     predefined_special = {
-        "254792506", "254801835", "254802150", "254802588",
-        "254803338", "254859196", "94193861", "95243156",
-        "95243200", "95243316", "95243513", "244349505",
-        "245970120", "254794170", "254794716", "257477773"
+        "254792506",
+        "254801835",
+        "254802588",
+        "254803338",
+        "254859196",
+        "94193861",
+        "95243156",
+        "95243200",
+        "95243316",
+        "95243513",
+        "244349505",
+        "245970120",
+        "254794170",
+        "254794716",
+        "257477773",
     }
 
     # Obtener nuevos IDs desde Samsara…
     try:
         samsara_h = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {SAMSARA_API_TOKEN}"
+            "Authorization": f"Bearer {SAMSARA_API_TOKEN}",
         }
         tags = requests.get(
-            "https://api.samsara.com/tags/4363967",
-            headers=samsara_h, timeout=60
+            "https://api.samsara.com/tags/4363967", headers=samsara_h, timeout=60
         )
         tags.raise_for_status()
-        new_ids = {
-            a["id"] for a in tags.json()
-            .get("data", {}).get("addresses", []) if a.get("id")
+        Geocercas_EC5 = {
+            a["id"]
+            for a in tags.json().get("data", {}).get("addresses", [])
+            if a.get("id") and a.get("name")
         }
-        special_address_ids = predefined_special.union(new_ids)
+
+        logging.info(f"Geocercas EC5 obtenidas: {Geocercas_EC5}")
+        
     except Exception:
         logging.exception("Error al obtener tags")
         sys.exit(1)
@@ -140,7 +238,7 @@ def main():
             "https://api.samsara.com/fleet/vehicles/stats?types=gps",
             headers=samsara_h,
             params={"ParentTagIds": "4363967"},
-            timeout=60
+            timeout=60,
         )
         veh.raise_for_status()
         vehicles = veh.json().get("data", [])
@@ -153,32 +251,51 @@ def main():
     now_mx = datetime.now(pytz.timezone(MX_TZ))
     for u in vehicles:
         try:
-            gps   = u.get("gps", {})
-            t     = gps.get("time")
+            gps = u.get("gps", {})
+            t = gps.get("time")
+            geocerca_id = gps.get("address", {}).get("id")
+            geocerca_name = gps.get("address", {}).get("name")
             if t:
                 loc_time = dp.parse(t).astimezone(pytz.timezone(MX_TZ))
                 if now_mx - loc_time > timedelta(hours=1):
                     continue
-            if gps.get("address", {}).get("id") in special_address_ids:
+            # if gps.get("address", {}).get("id") in predefined_special:
+            #    continue
+            # else:
+            #     gps.get("address", {}).get("id") in Geocercas_EC5
+            if geocerca_id in predefined_special:
                 continue
+            geocerca_detectada = ""
+            if geocerca_id in Geocercas_EC5 and geocerca_name:
+                geocerca_detectada = geocerca_name.strip()
+                
             speed = gps.get("speedMilesPerHour", 0)
-            ecu   = gps.get("isEcuSpeed", False)
+            ecu = gps.get("isEcuSpeed", False)
             if speed == 0 and not ecu:
                 continue
             status = "DETENIDO" if (speed == 0 and ecu) else "RUTA"
             location = gps.get("reverseGeo", {}).get("formattedLocation")
-                       
+
             lat_long = f"{gps.get('latitude')},{gps.get('longitude')}"
-                       
-        
-            results.append({
-                "Unidad":    u.get("name", "Sin nombre"),
-                "Ubicación": location,
-                "Estatus":   status,
-                "Coordenadas": lat_long,
-            })
+
+            results.append(
+                {
+                    "Unidad": u.get("name", "Sin nombre"),
+                    "Ubicación": location,
+                    "Estatus": status,
+                    "Coordenadas": lat_long,
+                    "Geocerca": geocerca_detectada,
+                }
+            )
         except Exception:
             logging.exception(f"Procesando unidad {u.get('name')}")
+
+    results = obtener_datos_google_sheets(results, now_mx)
+    ####DEBUG: Imprimir resultados antes de generar Excel##############
+    print("Unidades procesadas:")
+    for r in results:
+        print(f"Unidad: {r['Unidad']}, Geocerca: '{r['Geocerca']}', Origen: '{r.get('ORIGEN','')}', Destino: '{r.get('DESTINO','')}', Estatus: {r['Estatus']}")
+    ###################################
 
     # 6) Generar Excel desde plantilla
     wb = load_workbook(filename=plantilla_path)
@@ -191,85 +308,129 @@ def main():
             ws.unmerge_cells(str(mr))
 
     # 6.2) Fecha y hora
-    ws["C3"] = now_mx.date().isoformat()
-    ws["F3"] = now_mx.strftime("%H:%M:%S")
+    ws["G3"] = now_mx.date().isoformat()
+    ws["J3"] = now_mx.strftime("%H:%M:%S")
 
     # 6.3) Preparar estilos
     thin = Side(border_style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    green_fill = PatternFill(
+        start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
+    )
+    green_font = Font(color="006100")  # verde oscuro
     
-    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    green_font = Font(color="006100")   # verde oscuro
-    red_fill   = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    red_font   = Font(color="9C0006")    # rojo oscuro
+    red_fill = PatternFill(
+        start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    red_font = Font(color="9C0006")  # rojo oscuro
+
+    blue_fill = PatternFill(
+        start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
+    )
+    blue_font = Font(color="1F497D")  # azul oscuro
+    
+    reten_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+    reten_font = Font(color="7E350E")  # negro
 
     # 6.4) Volcar datos, fusionar Ubicación C–H, aplicar estilo y bordes
-    center_al = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    
+    center_al = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
     for i, row in enumerate(results, start=start_row):
-        # Unidad
-        cell_u = ws.cell(row=i, column=1, value=row["Unidad"])
-        cell_u.border = border
-        cell_u.alignment = center_al
-        
-        # Estatus
-        cell_s = ws.cell(row=i, column=2, value=row["Estatus"])
+        # ID ROSTERING
+        cell_id = ws.cell(row=i, column=1, value=row["ID ROSTERING"])
+        cell_id.border = border
+        cell_id.alignment = center_al
+
+        # ORIGEN
+        cell_ori = ws.cell(row=i, column=2, value=row["ORIGEN"])
+        cell_ori.border = border
+        cell_ori.alignment = center_al
+
+        # DESTINO
+        cell_dest = ws.cell(row=i, column=3, value=row["DESTINO"])
+        cell_dest.border = border
+        cell_dest.alignment = center_al
+
+        # ECO (Unidad)
+        cell_eco = ws.cell(row=i, column=4, value=row["Unidad"])
+        cell_eco.border = border
+        cell_eco.alignment = center_al
+
+        # PLACAS
+        cell_pla = ws.cell(row=i, column=5, value=row["PLACAS"])
+        cell_pla.border = border
+        cell_pla.alignment = center_al
+
+    # STATUS (Estatus)
+        cell_s = ws.cell(row=i, column=6, value=row["Estatus"])
         cell_s.border = border
         cell_s.alignment = center_al
-        if row["Estatus"] == "DETENIDO":
+        
+        if row.get("Geocerca", "").strip() == 'Reten Militar "El Desengaño" Sinaloa':
+            cell_s.value = "RETEN"
+            cell_s.fill = reten_fill
+            cell_s.font = reten_font
+        elif row["Estatus"] == "DETENIDO":
             cell_s.fill = red_fill
             cell_s.font = red_font
+        elif row["Estatus"] in ("EN ORIGEN", "EN DESTINO"):
+            cell_s.fill = blue_fill
+            cell_s.font = blue_font
         else:
             cell_s.fill = green_fill
             cell_s.font = green_font
+        
 
-        # Ubicación
-        ws.merge_cells(start_row=i, start_column=3, end_row=i, end_column=9)
-        for col in range(3, 10):
-            cell_loc = ws.cell(row=i, column=col, value=row["Ubicación"] if col==3 else None)
+    # UBICACIÓN (merge de columnas 7 a 13)
+        ws.merge_cells(start_row=i, start_column=7, end_row=i, end_column=13)
+        for col in range(7, 14):  # 14 NO incluido, así hace 7–13
+            cell_loc = ws.cell(
+                row=i, column=col, value=row["Ubicación"] if col == 7 else None
+            )
             cell_loc.border = border
             cell_loc.alignment = center_al
-        # Coordenadas
-        cell_c = ws.cell(row=i, column=10, value=row["Coordenadas"])
-        cell_c.border = border 
+
+    # COORDENADAS
+        cell_c = ws.cell(row=i, column=14, value=row["Coordenadas"])
+        cell_c.border = border
         cell_c.alignment = center_al
+
     # 6.5) Conteo dinámico en H2
     last_row = start_row + len(results) - 1
-    ws["H3"] = f"=COUNTA(A{start_row}:A{last_row})"
+    ws["L3"] = f"=COUNTA(D{start_row}:D{last_row})"
 
     # 6.6) Guardar archivo nuevo
-    ws.column_dimensions['A'].width = 15  # ~110px (ajusta si es necesario)
-    ws.row_dimensions[2].height = 15     # 45pt = ~60px
+    ws.column_dimensions["A"].width = 15  # ~110px (ajusta si es necesario)
+    ws.row_dimensions[2].height = 15  # 45pt = ~60px
     ws.row_dimensions[3].height = 15
     ws.row_dimensions[4].height = 15
 
     # Crear la imagen y ajustar tamaño
-    img_path     = base_dir / "mercadolibre_logo.png"
+    img_path = base_dir / "mercadolibre_logo.png"
     logo = Image(img_path)
-    logo.width = 125    # Ancho total que ocupará (ajusta si el logo es más chico/largo)
-    logo.height = 60   # Suma del alto de las 3 filas (45*3)
+    logo.width = 125  # Ancho total que ocupará (ajusta si el logo es más chico/largo)
+    logo.height = 60  # Suma del alto de las 3 filas (45*3)
     ws.add_image(logo, "A2")
 
     # 6.6) Guardar archivo nuevo
-    ts_str        = now_mx.strftime("%Y-%m-%d_%H-%M-%S")
+    ts_str = now_mx.strftime("%Y-%m-%d_%H-%M-%S")
     nuevo_archivo = base_dir / f"Reporte de estatus de unidades {ts_str}.xlsx"
     wb.save(nuevo_archivo)
     logging.info(f"Excel generado: {nuevo_archivo}")
 
-
     # 7) Enviar por correo
     try:
         msg = EmailMessage()
-        msg['From']    = SMTP_USER
-        msg['To']      = "mrodriguez@bgcapitalgroup.mx"
-        msg['Subject'] = "Reporte de estatus de unidades"
+        msg["From"] = SMTP_USER
+        msg["To"] = "mrodriguez@bgcapitalgroup.mx"
+        msg["Subject"] = "Reporte de estatus de unidades"
         msg.set_content("Hola, se adjunta el reporte.\n\nSaludos.")
         with open(nuevo_archivo, "rb") as f:
             msg.add_attachment(
                 f.read(),
                 maintype="application",
                 subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                filename=nuevo_archivo.name
+                filename=nuevo_archivo.name,
             )
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as s:
             s.starttls()
@@ -279,7 +440,7 @@ def main():
     except Exception:
         logging.exception("Error enviando correo")
         sys.exit(1)
-        
+
     # 8) Enviar por WhatsApp
     for destino in DESTINOS:
         try:
@@ -296,6 +457,7 @@ def main():
         logging.exception(f"No se pudo eliminar: {nuevo_archivo.name}")
 
     logging.info("===> Ejecución finalizada correctamente")
+
 
 if __name__ == "__main__":
     main()

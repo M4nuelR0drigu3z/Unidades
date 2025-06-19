@@ -4,4 +4,5 @@
 /EnvioMensaje.py
 /EnvioUnico.py
 /reporte_logs.log
-.env
+/.env
+Credenciales.json
