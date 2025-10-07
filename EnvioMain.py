@@ -16,6 +16,8 @@ from openpyxl.drawing.image import Image
 import gspread
 from gspread_dataframe import get_as_dataframe
 from pathlib import Path
+import re
+
 
 # ----------------------------------------------------------------------
 # CARGAR .env
@@ -26,7 +28,7 @@ load_dotenv(dotenv_path=env_path)
 # Credenciales y configuración
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
-DESTINOS = [d.strip() for d in os.getenv("WHATSAPP_DESTINOS", "").split(",") if d.strip()]
+DESTINOS = os.getenv("WHATSAPP_DESTINOS", "").split(",")
 
 SAMSARA_API_TOKEN = os.getenv("SAMSARA_API_TOKEN")
 
@@ -102,72 +104,88 @@ def enviar_template(media_id: str, to: str, excel_path: str):
 
 
 def obtener_datos_google_sheets(results, fecha_busqueda):
-
     base_dir = Path(__file__).parent
     gc = gspread.service_account(filename=base_dir / "credenciales.json")
     sh = gc.open_by_url(
         "https://docs.google.com/spreadsheets/d/1zbVe4Rk7aGaC_gyy0n2ik5VEWzn3w6XAyn91LNp2cMA/edit#gid=0"
     )
+    print("[Sheets] Hojas:", [ws.title for ws in sh.worksheets()])
 
-    # Determinar el nombre de la hoja según la fecha (mes/año
+    # 1) Determinar hoja (mes/año)
     meses_es = {
-        1: "ENERO",
-        2: "FEBRERO",
-        3: "MARZO",
-        4: "ABRIL",
-        5: "MAYO",
-        6: "JUNIO",
-        7: "JULIO",
-        8: "AGOSTO",
-        9: "SEPTIEMBRE",
-        10: "OCTUBRE",
-        11: "NOVIEMBRE",
-        12: "DICIEMBRE",
+        1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
+        5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
+        9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE",
     }
     mes = meses_es[fecha_busqueda.month]
     anio = str(fecha_busqueda.year)[-2:]  # "25"
     sheet_name = f"{mes} {anio}"
     worksheet = sh.worksheet(sheet_name)
-    df = get_as_dataframe(worksheet, evaluate_formulas=True)
-    df = df.fillna("")  # Limpia NaNs
+    print(f"[Sheets] Hoja usada: {sheet_name}")
 
-    dia = fecha_busqueda.day
-    mes = fecha_busqueda.strftime("%b").lower()
-    anio = fecha_busqueda.strftime("%y")
-    fecha_excel = f"{dia}-{mes}-{anio}"
-    fecha_excel_alt = fecha_busqueda.strftime("%d-%b-%y").lower()
+    # 2) Cargar a DataFrame
+    df = get_as_dataframe(worksheet, evaluate_formulas=True).fillna("")
 
-    # Definir nombres de columnas
-    col_fecha = "FECHA DE INICIO"
-    col_unidad = "UNIDAD"
-    col_roster = "ROSTERING \nID"
-    col_origen = "Origen 0"
+    # 3) Normalizar columna de fecha a tipo date (acepta ES y EN)
+    col_fecha   = "FECHA DE INICIO"
+    col_unidad  = "UNIDAD"
+    col_roster  = "ROSTERING \nID"
+    col_origen  = "Origen 0"
     col_destino = "Destino"
-    col_placas = "PLACAS"
+    col_placas  = "PLACAS"
 
-    # Filtrar filas por fecha, ignorando mayúsculas/minúsculas y ceros
-    filas_fecha = df[
-        df[col_fecha].astype(str).str.lower().isin([fecha_excel, fecha_excel_alt])
-    ]
+    MES_ES_EN = {
+        "ene": "jan", "feb": "feb", "mar": "mar", "abr": "apr",
+        "may": "may", "jun": "jun", "jul": "jul", "ago": "aug",
+        # variantes comunes
+        "sep": "sep", "sept": "sep", "set": "sep",
+        "oct": "oct", "nov": "nov", "dic": "dec",
+    }
 
+    def normaliza_fecha_cell(x):
+        s = str(x).strip().lower()
+        for es, en in MES_ES_EN.items():
+            s = re.sub(rf"\b{es}\b", en, s)
+        try:
+            # dayfirst=True para '22-ago-25'
+            return dp.parse(s, dayfirst=True).date()
+        except Exception:
+            return None
+
+    # Si falta la columna, evita reventar y muestra pistas
+    if col_fecha not in df.columns:
+        print(f"[Sheets][WARN] No existe la columna '{col_fecha}'. Columnas disponibles: {list(df.columns)}")
+        filas_fecha = df.iloc[0:0]  # vacío
+    else:
+        df["_fecha_norm"] = df[col_fecha].apply(normaliza_fecha_cell)
+        target_date = fecha_busqueda.date()
+        filas_fecha = df[df["_fecha_norm"] == target_date]
+
+    print(f"[Sheets] Fecha objetivo: {fecha_busqueda.date()} | Coincidencias: {len(filas_fecha)}")
+    if len(filas_fecha) == 0 and col_fecha in df.columns:
+        print("[Sheets] Ejemplos FECHA DE INICIO:", df[col_fecha].astype(str).head(5).tolist())
+
+    # 4) Enriquecer tus resultados
     for row in results:
         unidad = str(row.get("Unidad", "")).strip()
-        # Busca en las filas filtradas por fecha, aquellas con la unidad
-        
-        coincidencia = filas_fecha[
-            filas_fecha[col_unidad].astype(str).str.strip() == unidad
-        ]
+
+        if not filas_fecha.empty and col_unidad in df.columns:
+            coincidencia = filas_fecha[filas_fecha[col_unidad].astype(str).str.strip() == unidad]
+        else:
+            coincidencia = pd.DataFrame()
+
         if not coincidencia.empty:
             fila = coincidencia.iloc[0]
             row["ID ROSTERING"] = fila.get(col_roster, "")
-            row["ORIGEN"] = fila.get(col_origen, "")
-            row["DESTINO"] = fila.get(col_destino, "")
-            row["PLACAS"] = fila.get(col_placas, "")
-            geocerca = row.get("Geocerca", "").strip()
-            Origen_0 = str(fila.get(col_origen, "")).strip()
-            destino = str(fila.get(col_destino, "")).strip()
+            row["ORIGEN"]       = fila.get(col_origen, "")
+            row["DESTINO"]      = fila.get(col_destino, "")
+            row["PLACAS"]       = fila.get(col_placas, "")
+
+            geocerca  = row.get("Geocerca", "").strip()
+            origen_0  = str(fila.get(col_origen, "")).strip()
+            destino   = str(fila.get(col_destino, "")).strip()
             if geocerca:
-                if geocerca == Origen_0:
+                if geocerca == origen_0:
                     row["Estatus"] = "EN ORIGEN"
                 elif geocerca == destino:
                     row["Estatus"] = "EN DESTINO"
@@ -176,8 +194,8 @@ def obtener_datos_google_sheets(results, fecha_busqueda):
             row["ORIGEN"] = ""
             row["DESTINO"] = ""
             row["PLACAS"] = ""
-    return results
 
+    return results
 
 # ----------------------------------------------------------------------
 def main():
@@ -442,13 +460,13 @@ def main():
         sys.exit(1)
 
     # 8) Enviar por WhatsApp
-    for destino in DESTINOS:
-        try:
-            media_id = subir_media(str(nuevo_archivo))
-            enviar_template(media_id, destino, str(nuevo_archivo))
-        except Exception:
-            logging.exception(f"Error enviando WhatsApp a {destino}")
-            sys.exit(1)
+    # for destino in DESTINOS:
+    #     try:
+    #         media_id = subir_media(str(nuevo_archivo))
+    #         enviar_template(media_id, destino, str(nuevo_archivo))
+    #     except Exception:
+    #         logging.exception(f"Error enviando WhatsApp a {destino}")
+    #         sys.exit(1)
     # 9) Eliminar archivo
     try:
         os.remove(str(nuevo_archivo))
