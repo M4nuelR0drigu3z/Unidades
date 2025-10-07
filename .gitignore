@@ -1,12 +1,40 @@
+# Credenciales y configuracion local
+.env
+.env.*
+!.env.example
+Credenciales.json
+credenciales.json
+*.service-account.json
 
+# Entornos y cache de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Archivos generados por los reportes
+outputs/
+*.log
+comparacion_telemetria_samsara.csv
+unidades_excluidas.csv
+Reporte_*.xlsx
+feed_ultimas_ubicaciones_*.xlsx
+Vehiculos.xlsx
+~$*.xlsx
+
+# Herramientas locales y archivos temporales
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Scripts locales fuera del flujo versionado
 /DataUnitsLocation.py
 /DVIR.py
 /EnvioMensaje.py
 /EnvioUnico.py
-/reporte_logs.log
-/.env
-Credenciales.json
-
-Prueba GS.py
-UnidadesEc03.py
-.envubicaciones_update.log
+/Prueba GS.py
+/UnidadesEc03.py
