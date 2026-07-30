@@ -11,7 +11,6 @@ from pathlib import Path
 import gspread
 from gspread_dataframe import get_as_dataframe
 import re
-from detenciones import enriquecer_minutos_detenido
 
 
 # ----------------------------------------------------------------------
@@ -21,9 +20,10 @@ load_dotenv(dotenv_path=env_path)
 
 
 # ----------------------------------------------------------------------
-# Credenciales y configuracion
+# Credenciales y configuración
 SAMSARA_API_TOKEN = os.getenv("SAMSARA_API_TOKEN")
 GOOGLE_CHAT_WEBHOOK_URL = os.getenv("GOOGLE_CHAT_WEBHOOK_URL")
+
 MX_TZ = "America/Mexico_City"
 
 
@@ -39,11 +39,6 @@ logging.basicConfig(
 # ----------------------------------------------------------------------
 # GOOGLE SHEETS
 def obtener_datos_google_sheets(results, fecha_busqueda):
-    """
-    Se conserva solo para enriquecer con datos como ROSTERING y PLACAS.
-    Ya no se usa para origen/destino.
-    """
-
     base_dir = Path(__file__).parent
 
     gc = gspread.service_account(filename=base_dir / "credenciales.json")
@@ -76,9 +71,9 @@ def obtener_datos_google_sheets(results, fecha_busqueda):
     try:
         worksheet = sh.worksheet(sheet_name)
     except Exception:
-        logging.exception(f"No se encontro la hoja {sheet_name}")
-        print(f"[Sheets][ERROR] No se encontro la hoja: {sheet_name}")
-        print("[Sheets] Se continuara sin enriquecer datos.")
+        logging.exception(f"No se encontró la hoja {sheet_name}")
+        print(f"[Sheets][ERROR] No se encontró la hoja: {sheet_name}")
+        print("[Sheets] Se continuará sin enriquecer datos.")
         return results
 
     print(f"[Sheets] Hoja usada: {sheet_name}")
@@ -88,6 +83,8 @@ def obtener_datos_google_sheets(results, fecha_busqueda):
     col_fecha = "FECHA DE INICIO"
     col_unidad = "UNIDAD"
     col_roster = "ROSTERING \nID"
+    col_origen = "Origen 0"
+    col_destino = "Destino"
     col_placas = "PLACAS"
 
     MES_ES_EN = {
@@ -157,13 +154,24 @@ def obtener_datos_google_sheets(results, fecha_busqueda):
             fila = coincidencia.iloc[0]
 
             row["ID ROSTERING"] = fila.get(col_roster, "")
+            row["ORIGEN"] = fila.get(col_origen, "")
+            row["DESTINO"] = fila.get(col_destino, "")
             row["PLACAS"] = fila.get(col_placas, "")
+
+            geocerca = str(row.get("Geocerca", "")).strip()
+            origen_0 = str(fila.get(col_origen, "")).strip()
+            destino = str(fila.get(col_destino, "")).strip()
+
+            if geocerca:
+                if geocerca == origen_0:
+                    row["Estatus"] = "EN ORIGEN"
+                elif geocerca == destino:
+                    row["Estatus"] = "EN DESTINO"
         else:
             row["ID ROSTERING"] = ""
+            row["ORIGEN"] = ""
+            row["DESTINO"] = ""
             row["PLACAS"] = ""
-
-        row["ORIGEN"] = ""
-        row["DESTINO"] = ""
 
     return results
 
@@ -172,15 +180,16 @@ def obtener_datos_google_sheets(results, fecha_busqueda):
 # FORMATO DEL REPORTE
 def icono_estatus(row):
     estatus = str(row.get("Estatus", "")).strip()
+    geocerca = str(row.get("Geocerca", "")).strip()
 
-    if estatus == "DETENIDO":
+    if geocerca == 'Reten Militar "El Desengaño" Sinaloa':
+        return "🚧", "RETEN"
+    elif estatus == "DETENIDO":
         return "⛔", "DETENIDO"
-    elif estatus == "TRAFICO LENTO":
-        return "🚦", "TRAFICO LENTO"
+    elif estatus in ("EN ORIGEN", "EN DESTINO"):
+        return "📍", estatus
     elif estatus == "RUTA":
         return "✅", "RUTA"
-    elif estatus == "RETEN":
-        return "🚧", "RETEN"
     else:
         return "❓", estatus or "SIN ESTATUS"
 
@@ -190,8 +199,8 @@ def construir_reporte_google(results, now_mx):
 
     detenidos = 0
     ruta = 0
+    origen_destino = 0
     reten = 0
-    trafico_lento = 0
 
     filas = []
 
@@ -202,46 +211,23 @@ def construir_reporte_google(results, now_mx):
             detenidos += 1
         elif estatus_final == "RUTA":
             ruta += 1
-        elif estatus_final == "TRAFICO LENTO":
-            trafico_lento += 1
+        elif estatus_final in ("EN ORIGEN", "EN DESTINO"):
+            origen_destino += 1
         elif estatus_final == "RETEN":
             reten += 1
 
         unidad = str(row.get("Unidad", "") or "")
         ubicacion = str(row.get("Ubicación", "") or "")
         coordenadas = str(row.get("Coordenadas", "") or "")
-        tiempo_detenido = str(row.get("Tiempo Detenido") or "")
-        tiempo_trafico = str(row.get("Tiempo Trafico") or "")
-        motor = str(row.get("Motor") or "")
-
-        if estatus_final == "DETENIDO":
-            tiempo_reporte = tiempo_detenido
-        elif estatus_final == "TRAFICO LENTO":
-            tiempo_reporte = tiempo_trafico
-        else:
-            tiempo_reporte = ""
 
         filas.append({
             "UNIDAD": unidad,
             "ESTATUS": estatus_final,
-            "TIEMPO": tiempo_reporte,
-            "MOTOR": motor,
             "UBICACION": ubicacion,
             "COORDENADAS": coordenadas,
         })
-
-    orden_estatus = {
-        "DETENIDO": 0,
-        "TRAFICO LENTO": 1,
-        "RETEN": 2,
-        "RUTA": 3,
-    }
-
     filas.sort(
-        key=lambda x: (
-            orden_estatus.get(x["ESTATUS"], 99),
-            x["UNIDAD"]
-        )
+        key=lambda x: 0 if x["ESTATUS"] == "DETENIDO" else 1
     )
 
     lineas = []
@@ -255,7 +241,7 @@ def construir_reporte_google(results, now_mx):
     lineas.append("📊 *Resumen*")
     lineas.append(f"✅ En ruta: {ruta}")
     lineas.append(f"⛔ Detenidos: {detenidos}")
-    lineas.append(f"🚦 Tráfico lento: {trafico_lento}")
+    lineas.append(f"📍 En origen/destino: {origen_destino}")
     lineas.append(f"🚧 Retén: {reten}")
     lineas.append("")
     lineas.append("*Detalle:*")
@@ -266,10 +252,9 @@ def construir_reporte_google(results, now_mx):
         lineas.append("```")
         return "\n".join(lineas)
 
+    # Anchos fijos para simular columnas
     ancho_unidad = 15
     ancho_estatus = 14
-    ancho_tiempo = 12
-    ancho_motor = 8
     ancho_ubicacion = 65
     ancho_coordenadas = 24
 
@@ -289,10 +274,6 @@ def construir_reporte_google(results, now_mx):
         + " | "
         + celda("ESTATUS", ancho_estatus)
         + " | "
-        + celda("TIEMPO", ancho_tiempo)
-        + " | "
-        + celda("MOTOR", ancho_motor)
-        + " | "
         + celda("UBICACION", ancho_ubicacion)
         + " | "
         + celda("COORDENADAS", ancho_coordenadas)
@@ -302,10 +283,6 @@ def construir_reporte_google(results, now_mx):
         "-" * ancho_unidad
         + "-+-"
         + "-" * ancho_estatus
-        + "-+-"
-        + "-" * ancho_tiempo
-        + "-+-"
-        + "-" * ancho_motor
         + "-+-"
         + "-" * ancho_ubicacion
         + "-+-"
@@ -321,10 +298,6 @@ def construir_reporte_google(results, now_mx):
             + " | "
             + celda(fila["ESTATUS"], ancho_estatus)
             + " | "
-            + celda(fila["TIEMPO"], ancho_tiempo)
-            + " | "
-            + celda(fila["MOTOR"], ancho_motor)
-            + " | "
             + celda(fila["UBICACION"], ancho_ubicacion)
             + " | "
             + celda(fila["COORDENADAS"], ancho_coordenadas)
@@ -338,8 +311,92 @@ def construir_reporte_google(results, now_mx):
     return "\n".join(lineas)
 
 
+# def construir_reporte_google(results, now_mx):
+#     total = len(results)
+
+#     detenidos = 0
+#     ruta = 0
+#     origen_destino = 0
+#     reten = 0
+
+#     lineas = []
+
+#     lineas.append("🚛 *REPORTE DE ESTATUS DE UNIDADES*")
+#     lineas.append("━━━━━━━━━━━━━━━━━━━━")
+#     lineas.append(f"📅 *Fecha:* {now_mx.strftime('%Y-%m-%d')}")
+#     lineas.append(f"🕒 *Hora:* {now_mx.strftime('%H:%M:%S')}")
+#     lineas.append(f"📦 *Total unidades:* {total}")
+#     lineas.append("")
+
+#     for row in results:
+#         _, estatus_final = icono_estatus(row)
+
+#         if estatus_final == "DETENIDO":
+#             detenidos += 1
+#         elif estatus_final == "RUTA":
+#             ruta += 1
+#         elif estatus_final in ("EN ORIGEN", "EN DESTINO"):
+#             origen_destino += 1
+#         elif estatus_final == "RETEN":
+#             reten += 1
+
+#     lineas.append("📊 *Resumen*")
+#     lineas.append(f"✅ En ruta: {ruta}")
+#     lineas.append(f"⛔ Detenidos: {detenidos}")
+#     lineas.append(f"📍 En origen/destino: {origen_destino}")
+#     lineas.append(f"🚧 Retén: {reten}")
+#     lineas.append("")
+#     lineas.append("━━━━━━━━━━━━━━━━━━━━")
+#     lineas.append("")
+
+#     if not results:
+#         lineas.append("⚠️ No se encontraron unidades para reportar.")
+#         lineas.append("")
+#         lineas.append("━━━━━━━━━━━━━━━━━━━━")
+#         return "\n".join(lineas)
+
+#     for index, row in enumerate(results, start=1):
+#         icono, estatus_final = icono_estatus(row)
+
+#         unidad = row.get("Unidad", "-")
+#         ubicacion = row.get("Ubicación", "-")
+#         coordenadas = row.get("Coordenadas", "-")
+#         geocerca = row.get("Geocerca", "")
+#         origen = row.get("ORIGEN", "")
+#         destino = row.get("DESTINO", "")
+#         rostering = row.get("ID ROSTERING", "")
+#         placas = row.get("PLACAS", "")
+
+#         lineas.append(f"{icono} *{index}. Unidad:* {unidad}")
+#         lineas.append(f"   • *Estatus:* {estatus_final}")
+
+#         if rostering:
+#             lineas.append(f"   • *ROSTERING ID:* {rostering}")
+
+#         if placas:
+#             lineas.append(f"   • *Placas:* {placas}")
+
+#         if origen:
+#             lineas.append(f"   • *Origen:* {origen}")
+
+#         if destino:
+#             lineas.append(f"   • *Destino:* {destino}")
+
+#         if geocerca:
+#             lineas.append(f"   • *Geocerca:* {geocerca}")
+
+#         lineas.append(f"   • *Ubicación:* {ubicacion}")
+#         lineas.append(f"   • *Coordenadas:* {coordenadas}")
+#         lineas.append("")
+#         lineas.append("━━━━━━━━━━━━━━━━━━━━")
+#         lineas.append("")
+
+#     lineas.append("✅ *Reporte generado automáticamente*")
+
+#     return "\n".join(lineas)
+
 # ----------------------------------------------------------------------
-# ENVIO A GOOGLE CHAT
+# ENVÍO A GOOGLE CHAT
 def enviar_google_chat(texto):
     if not GOOGLE_CHAT_WEBHOOK_URL:
         logging.error("Falta GOOGLE_CHAT_WEBHOOK_URL en variables de entorno")
@@ -367,8 +424,8 @@ def enviar_google_chat(texto):
 # ----------------------------------------------------------------------
 # MAIN
 def main():
-    logging.info("===> Inicio de ejecucion")
-    print("===> Inicio de ejecucion")
+    logging.info("===> Inicio de ejecución")
+    print("===> Inicio de ejecución")
 
     if not SAMSARA_API_TOKEN:
         logging.error("Falta SAMSARA_API_TOKEN en variables de entorno")
@@ -414,7 +471,7 @@ def main():
         tags.raise_for_status()
 
         Geocercas_EC5 = {
-            str(a["id"]): a["name"].strip()
+            a["id"]
             for a in tags.json().get("data", {}).get("addresses", [])
             if a.get("id") and a.get("name")
         }
@@ -422,39 +479,35 @@ def main():
         logging.info(f"Geocercas EC5 obtenidas: {Geocercas_EC5}")
         print(f"[Samsara] Geocercas obtenidas: {len(Geocercas_EC5)}")
 
-        print("[Samsara] Lista de geocercas EC5:")
-        for gid, nombre in Geocercas_EC5.items():
-            print(f"  {gid} | {nombre}")
-
     except Exception as e:
         logging.exception("Error al obtener tags")
         print("❌ Error al obtener tags de Samsara:", e)
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Obtener datos GPS actuales
+    # Obtener datos GPS
     try:
         print("[Samsara] Obteniendo datos GPS...")
 
         veh = requests.get(
-            "https://api.samsara.com/fleet/vehicles/stats?types=gps,engineStates,ecuSpeedMph",
+            "https://api.samsara.com/fleet/vehicles/stats?types=gps",
             headers=samsara_h,
-            params={"parentTagIds": "4363967"},
+            params={"ParentTagIds": "4363967"},
             timeout=60,
         )
 
-        print("[Samsara] Vehiculos status:", veh.status_code)
+        print("[Samsara] Vehículos status:", veh.status_code)
 
         veh.raise_for_status()
 
         vehicles = veh.json().get("data", [])
 
-        print(f"[Samsara] Vehiculos recibidos: {len(vehicles)}")
-        logging.info(f"Vehiculos recibidos: {len(vehicles)}")
+        print(f"[Samsara] Vehículos recibidos: {len(vehicles)}")
+        logging.info(f"Vehículos recibidos: {len(vehicles)}")
 
     except Exception as e:
-        logging.exception("Error al obtener datos de vehiculos")
-        print("❌ Error al obtener datos de vehiculos:", e)
+        logging.exception("Error al obtener datos de vehículos")
+        print("❌ Error al obtener datos de vehículos:", e)
         sys.exit(1)
 
     # ------------------------------------------------------------------
@@ -462,178 +515,57 @@ def main():
     results = []
     now_mx = datetime.now(pytz.timezone(MX_TZ))
 
-    omitidas_patio = 0
-    omitidas_especiales = 0
-    omitidas_sin_ecu = 0
-    omitidas_gps_viejo = 0
-    unidades_excluidas = []
-    unidades_con_error = []
-
     for u in vehicles:
         try:
-            unidad_id = str(u.get("id", ""))
-            unidad_nombre = str(u.get("name", "Sin nombre"))
-    
-            gps = u.get("gps") or {}
+            gps = u.get("gps", {})
             t = gps.get("time")
-    
-            geocerca = gps.get("address") or {}
-            geocerca_id = str(geocerca.get("id") or "")
-            geocerca_name = str(geocerca.get("name") or "").strip()
-    
-            speed = gps.get("speedMilesPerHour")
-            ecu = gps.get("isEcuSpeed", False)
-    
-            # --------------------------------------------------------------
-            # FILTRO 1: GPS con antigüedad mayor a una hora
+
+            geocerca_id = gps.get("address", {}).get("id")
+            geocerca_name = gps.get("address", {}).get("name")
+
             if t:
-                loc_time = dp.parse(t).astimezone(
-                    pytz.timezone(MX_TZ)
-                )
-    
-                antiguedad = now_mx - loc_time
-    
-                if antiguedad > timedelta(hours=1):
-                    omitidas_gps_viejo += 1
-    
-                    unidades_excluidas.append({
-                        "Unidad": unidad_nombre,
-                        "SamsaraVehicleId": unidad_id,
-                        "Motivo": "GPS VIEJO",
-                        "Detalle": (
-                            f"Último GPS: {loc_time.strftime('%Y-%m-%d %H:%M:%S')} | "
-                            f"Antigüedad minutos: {int(antiguedad.total_seconds() / 60)}"
-                        ),
-                        "GeocercaId": geocerca_id,
-                        "Geocerca": geocerca_name,
-                        "Speed": speed,
-                        "IsEcuSpeed": ecu,
-                    })
-    
+                loc_time = dp.parse(t).astimezone(pytz.timezone(MX_TZ))
+
+                if now_mx - loc_time > timedelta(hours=1):
                     continue
-                
-            # --------------------------------------------------------------
-            # FILTRO 2: Geocercas especiales
+
             if geocerca_id in predefined_special:
-                omitidas_especiales += 1
-    
-                unidades_excluidas.append({
-                    "Unidad": unidad_nombre,
-                    "SamsaraVehicleId": unidad_id,
-                    "Motivo": "GEOCERCA ESPECIAL",
-                    "Detalle": "El ID está dentro de predefined_special",
-                    "GeocercaId": geocerca_id,
-                    "Geocerca": geocerca_name,
-                    "Speed": speed,
-                    "IsEcuSpeed": ecu,
-                })
-    
                 continue
-            
-            # --------------------------------------------------------------
-            # FILTRO 3: Patio/geocerca EC5
+
             geocerca_detectada = ""
-    
-            if geocerca_id in Geocercas_EC5:
-                geocerca_detectada = Geocercas_EC5[geocerca_id]
-    
-            if geocerca_detectada:
-                omitidas_patio += 1
-    
-                unidades_excluidas.append({
-                    "Unidad": unidad_nombre,
-                    "SamsaraVehicleId": unidad_id,
-                    "Motivo": "PATIO/GEOCERCA EC5",
-                    "Detalle": "La geocerca pertenece al tag 4363967",
-                    "GeocercaId": geocerca_id,
-                    "Geocerca": geocerca_detectada,
-                    "Speed": speed,
-                    "IsEcuSpeed": ecu,
-                })
-    
-                continue
-            
-            # --------------------------------------------------------------
-            # FILTRO 4: Sin velocidad ECU
-            speed = speed if speed is not None else 0
-    
+
+            if geocerca_id in Geocercas_EC5 and geocerca_name:
+                geocerca_detectada = geocerca_name.strip()
+
+            speed = gps.get("speedMilesPerHour", 0)
+            ecu = gps.get("isEcuSpeed", False)
+
             if speed == 0 and not ecu:
-                omitidas_sin_ecu += 1
-    
-                unidades_excluidas.append({
-                    "Unidad": unidad_nombre,
-                    "SamsaraVehicleId": unidad_id,
-                    "Motivo": "SPEED 0 SIN ECU",
-                    "Detalle": (
-                        "speedMilesPerHour es 0 y "
-                        "isEcuSpeed es False"
-                    ),
-                    "GeocercaId": geocerca_id,
-                    "Geocerca": geocerca_name,
-                    "Speed": speed,
-                    "IsEcuSpeed": ecu,
-                })
-    
                 continue
-            
-            # --------------------------------------------------------------
-            # UNIDAD INCLUIDA
+
             status = "DETENIDO" if speed == 0 and ecu else "RUTA"
-    
-            location = (
-                gps.get("reverseGeo") or {}
-            ).get("formattedLocation", "")
-    
+
+            location = gps.get("reverseGeo", {}).get("formattedLocation", "")
+
             lat = gps.get("latitude", "")
             lon = gps.get("longitude", "")
             lat_long = f"{lat},{lon}"
-    
-            print(
-                f"[INCLUIDA] Unidad={unidad_nombre} | "
-                f"id={unidad_id} | "
-                f"speed={speed} | "
-                f"ecu={ecu} | "
-                f"geocerca_id={geocerca_id} | "
-                f"estatus={status}"
-            )
-    
-            results.append({
-                "Unidad": unidad_nombre,
-                "SamsaraVehicleId": unidad_id,
-                "GpsActual": gps,
-                "Ubicación": location,
-                "Estatus": status,
-                "Coordenadas": lat_long,
-                "Geocerca": "",
-                "Minutos Detenido": None,
-                "Tiempo Detenido": None,
-                "Detenido Desde": None,
-                "Ventana Detenido": "",
-                "Minutos Trafico": None,
-                "Tiempo Trafico": None,
-                "Trafico Desde": None,
-                "Motor": "",
-                "EcuSpeedActual": None,
-            })
-    
-        except Exception as error:
-            logging.exception(
-                f"Error procesando unidad {u.get('name')}"
-            )
-    
-            unidades_con_error.append({
-                "Unidad": u.get("name", "Sin nombre"),
-                "SamsaraVehicleId": u.get("id"),
-                "Error": str(error),
-            })
 
-    print(f"[Proceso] Unidades para reporte antes de analizar detenidos: {len(results)}")
-    print(f"[Proceso] Omitidas por patio/geocerca: {omitidas_patio}")
-    print(f"[Proceso] Omitidas por geocerca especial: {omitidas_especiales}")
-    print(f"[Proceso] Omitidas por GPS viejo: {omitidas_gps_viejo}")
-    print(f"[Proceso] Omitidas por speed 0 sin ECU: {omitidas_sin_ecu}")
+            results.append(
+                {
+                    "Unidad": u.get("name", "Sin nombre"),
+                    "Ubicación": location,
+                    "Estatus": status,
+                    "Coordenadas": lat_long,
+                    "Geocerca": geocerca_detectada,
+                }
+            )
 
-    logging.info(f"Unidades para reporte antes de analizar detenidos: {len(results)}")
+        except Exception:
+            logging.exception(f"Procesando unidad {u.get('name')}")
+
+    print(f"[Proceso] Unidades filtradas para reporte: {len(results)}")
+    logging.info(f"Unidades filtradas para reporte: {len(results)}")
 
     # ------------------------------------------------------------------
     # Enriquecer con Google Sheets
@@ -642,33 +574,17 @@ def main():
     except Exception as e:
         logging.exception("Error obteniendo datos de Google Sheets")
         print("⚠️ Error obteniendo datos de Google Sheets:", e)
-        print("⚠️ Se continuara con datos basicos de Samsara.")
-
-    # ------------------------------------------------------------------
-    # Enriquecer detenidos con historial GPS, engineStates y ecuSpeedMph
-    try:
-        results = enriquecer_minutos_detenido(
-            results=results,
-            token=SAMSARA_API_TOKEN,
-            now_mx=now_mx,
-        )
-    except Exception as e:
-        logging.exception("Error enriqueciendo minutos detenido")
-        print("⚠️ Error enriqueciendo minutos detenido:", e)
-        print("⚠️ Se continuara sin informacion de minutos detenido.")
+        print("⚠️ Se continuará con datos básicos de Samsara.")
 
     print("")
-    print("[DEBUG DESPUES DETENCIONES]")
+    print("Unidades procesadas:")
     for r in results:
         print(
-            f"Unidad={r.get('Unidad')} | "
-            f"Estatus={r.get('Estatus')} | "
-            f"TiempoDet={r.get('Tiempo Detenido')} | "
-            f"TiempoTrafico={r.get('Tiempo Trafico')} | "
-            f"Motor={r.get('Motor')} | "
-            f"ECU={r.get('EcuSpeedActual')} | "
-            f"Ventana={r.get('Ventana Detenido')} | "
-            f"Geocerca={r.get('Geocerca')}"
+            f"Unidad: {r.get('Unidad', '')}, "
+            f"Geocerca: '{r.get('Geocerca', '')}', "
+            f"Origen: '{r.get('ORIGEN', '')}', "
+            f"Destino: '{r.get('DESTINO', '')}', "
+            f"Estatus: {r.get('Estatus', '')}"
         )
 
     # ------------------------------------------------------------------
@@ -687,8 +603,8 @@ def main():
         print("❌ Error construyendo o enviando mensaje a Google Chat:", e)
         sys.exit(1)
 
-    logging.info("===> Ejecucion finalizada correctamente")
-    print("===> Ejecucion finalizada correctamente")
+    logging.info("===> Ejecución finalizada correctamente")
+    print("===> Ejecución finalizada correctamente")
 
 
 # ----------------------------------------------------------------------

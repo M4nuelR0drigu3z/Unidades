@@ -11,7 +11,7 @@ from pathlib import Path
 import gspread
 from gspread_dataframe import get_as_dataframe
 import re
-from detenciones import enriquecer_minutos_detenido
+from Versions.detenciones_copy import enriquecer_minutos_detenido
 
 
 # ----------------------------------------------------------------------
@@ -23,7 +23,7 @@ load_dotenv(dotenv_path=env_path)
 # ----------------------------------------------------------------------
 # Credenciales y configuracion
 SAMSARA_API_TOKEN = os.getenv("SAMSARA_API_TOKEN")
-GOOGLE_CHAT_WEBHOOK_URL = os.getenv("GOOGLE_CHAT_WEBHOOK_URL")
+GOOGLE_CHAT_WEBHOOK_URL = os.getenv("GOOGLE_CHAT_WEBHOOK_URL_PRUEBAS")
 MX_TZ = "America/Mexico_City"
 
 
@@ -439,7 +439,7 @@ def main():
         veh = requests.get(
             "https://api.samsara.com/fleet/vehicles/stats?types=gps,engineStates,ecuSpeedMph",
             headers=samsara_h,
-            params={"parentTagIds": "4363967"},
+            params={"ParentTagIds": "4363967"},
             timeout=60,
         )
 
@@ -466,166 +466,103 @@ def main():
     omitidas_especiales = 0
     omitidas_sin_ecu = 0
     omitidas_gps_viejo = 0
-    unidades_excluidas = []
-    unidades_con_error = []
 
     for u in vehicles:
         try:
-            unidad_id = str(u.get("id", ""))
-            unidad_nombre = str(u.get("name", "Sin nombre"))
-    
-            gps = u.get("gps") or {}
+            gps = u.get("gps", {})
             t = gps.get("time")
-    
-            geocerca = gps.get("address") or {}
-            geocerca_id = str(geocerca.get("id") or "")
-            geocerca_name = str(geocerca.get("name") or "").strip()
-    
-            speed = gps.get("speedMilesPerHour")
-            ecu = gps.get("isEcuSpeed", False)
-    
-            # --------------------------------------------------------------
-            # FILTRO 1: GPS con antigüedad mayor a una hora
+
+            geocerca_id = gps.get("address", {}).get("id")
+            geocerca_name = gps.get("address", {}).get("name")
+
             if t:
-                loc_time = dp.parse(t).astimezone(
-                    pytz.timezone(MX_TZ)
-                )
-    
-                antiguedad = now_mx - loc_time
-    
-                if antiguedad > timedelta(hours=1):
+                loc_time = dp.parse(t).astimezone(pytz.timezone(MX_TZ))
+
+                if now_mx - loc_time > timedelta(hours=1):
                     omitidas_gps_viejo += 1
-    
-                    unidades_excluidas.append({
-                        "Unidad": unidad_nombre,
-                        "SamsaraVehicleId": unidad_id,
-                        "Motivo": "GPS VIEJO",
-                        "Detalle": (
-                            f"Último GPS: {loc_time.strftime('%Y-%m-%d %H:%M:%S')} | "
-                            f"Antigüedad minutos: {int(antiguedad.total_seconds() / 60)}"
-                        ),
-                        "GeocercaId": geocerca_id,
-                        "Geocerca": geocerca_name,
-                        "Speed": speed,
-                        "IsEcuSpeed": ecu,
-                    })
-    
+                    print(
+                        f"[Filtro GPS viejo] Unidad {u.get('name')} omitida | "
+                        f"GPS time={loc_time}"
+                    )
                     continue
-                
-            # --------------------------------------------------------------
-            # FILTRO 2: Geocercas especiales
+
+            geocerca_id = str(geocerca_id) if geocerca_id else ""
+
             if geocerca_id in predefined_special:
                 omitidas_especiales += 1
-    
-                unidades_excluidas.append({
-                    "Unidad": unidad_nombre,
-                    "SamsaraVehicleId": unidad_id,
-                    "Motivo": "GEOCERCA ESPECIAL",
-                    "Detalle": "El ID está dentro de predefined_special",
-                    "GeocercaId": geocerca_id,
-                    "Geocerca": geocerca_name,
-                    "Speed": speed,
-                    "IsEcuSpeed": ecu,
-                })
-    
+                print(
+                    f"[Filtro Geocerca Especial] Unidad {u.get('name')} omitida | "
+                    f"geocerca_id={geocerca_id}"
+                )
                 continue
-            
-            # --------------------------------------------------------------
-            # FILTRO 3: Patio/geocerca EC5
+
             geocerca_detectada = ""
-    
+
             if geocerca_id in Geocercas_EC5:
                 geocerca_detectada = Geocercas_EC5[geocerca_id]
-    
+            elif geocerca_name:
+                geocerca_detectada = geocerca_name.strip()
+
+            # Si está dentro de patio/geocerca, no se reporta.
             if geocerca_detectada:
                 omitidas_patio += 1
-    
-                unidades_excluidas.append({
-                    "Unidad": unidad_nombre,
-                    "SamsaraVehicleId": unidad_id,
-                    "Motivo": "PATIO/GEOCERCA EC5",
-                    "Detalle": "La geocerca pertenece al tag 4363967",
-                    "GeocercaId": geocerca_id,
-                    "Geocerca": geocerca_detectada,
-                    "Speed": speed,
-                    "IsEcuSpeed": ecu,
-                })
-    
+                print(
+                    f"[Filtro Patio] Unidad {u.get('name')} omitida por geocerca: "
+                    f"{geocerca_detectada}"
+                )
                 continue
-            
-            # --------------------------------------------------------------
-            # FILTRO 4: Sin velocidad ECU
-            speed = speed if speed is not None else 0
-    
+
+            speed = gps.get("speedMilesPerHour", 0)
+            ecu = gps.get("isEcuSpeed", False)
+
             if speed == 0 and not ecu:
                 omitidas_sin_ecu += 1
-    
-                unidades_excluidas.append({
-                    "Unidad": unidad_nombre,
-                    "SamsaraVehicleId": unidad_id,
-                    "Motivo": "SPEED 0 SIN ECU",
-                    "Detalle": (
-                        "speedMilesPerHour es 0 y "
-                        "isEcuSpeed es False"
-                    ),
-                    "GeocercaId": geocerca_id,
-                    "Geocerca": geocerca_name,
-                    "Speed": speed,
-                    "IsEcuSpeed": ecu,
-                })
-    
+                print(
+                    f"[Filtro Sin ECU] Unidad {u.get('name')} omitida | "
+                    f"speed={speed} | ecu={ecu}"
+                )
                 continue
-            
-            # --------------------------------------------------------------
-            # UNIDAD INCLUIDA
+
             status = "DETENIDO" if speed == 0 and ecu else "RUTA"
-    
-            location = (
-                gps.get("reverseGeo") or {}
-            ).get("formattedLocation", "")
-    
+
+            location = gps.get("reverseGeo", {}).get("formattedLocation", "")
+
             lat = gps.get("latitude", "")
             lon = gps.get("longitude", "")
             lat_long = f"{lat},{lon}"
-    
+
             print(
-                f"[INCLUIDA] Unidad={unidad_nombre} | "
-                f"id={unidad_id} | "
+                f"[DEBUG ESTATUS] Unidad={u.get('name')} | "
+                f"id={u.get('id')} | "
                 f"speed={speed} | "
                 f"ecu={ecu} | "
                 f"geocerca_id={geocerca_id} | "
-                f"estatus={status}"
+                f"status_inicial={status}"
             )
-    
-            results.append({
-                "Unidad": unidad_nombre,
-                "SamsaraVehicleId": unidad_id,
-                "GpsActual": gps,
-                "Ubicación": location,
-                "Estatus": status,
-                "Coordenadas": lat_long,
-                "Geocerca": "",
-                "Minutos Detenido": None,
-                "Tiempo Detenido": None,
-                "Detenido Desde": None,
-                "Ventana Detenido": "",
-                "Minutos Trafico": None,
-                "Tiempo Trafico": None,
-                "Trafico Desde": None,
-                "Motor": "",
-                "EcuSpeedActual": None,
-            })
-    
-        except Exception as error:
-            logging.exception(
-                f"Error procesando unidad {u.get('name')}"
+
+            results.append(
+                {
+                    "Unidad": u.get("name", "Sin nombre"),
+                    "SamsaraVehicleId": u.get("id"),
+                    "GpsActual": gps,
+                    "Ubicación": location,
+                    "Estatus": status,
+                    "Coordenadas": lat_long,
+                    "Geocerca": "",
+                    "Minutos Detenido": None,
+                    "Tiempo Detenido": None,
+                    "Detenido Desde": None,
+                    "Ventana Detenido": "",
+                    "Minutos Trafico": None,
+                    "Tiempo Trafico": None,
+                    "Trafico Desde": None,
+                    "Motor": "",
+                    "EcuSpeedActual": None,
+                }
             )
-    
-            unidades_con_error.append({
-                "Unidad": u.get("name", "Sin nombre"),
-                "SamsaraVehicleId": u.get("id"),
-                "Error": str(error),
-            })
+
+        except Exception:
+            logging.exception(f"Procesando unidad {u.get('name')}")
 
     print(f"[Proceso] Unidades para reporte antes de analizar detenidos: {len(results)}")
     print(f"[Proceso] Omitidas por patio/geocerca: {omitidas_patio}")
