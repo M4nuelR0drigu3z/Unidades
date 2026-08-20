@@ -11,7 +11,7 @@ from pathlib import Path
 import gspread
 from gspread_dataframe import get_as_dataframe
 import re
-from Versions.detenciones_copy import enriquecer_minutos_detenido
+from archive.versions.detenciones_copy import enriquecer_minutos_detenido
 
 
 # ----------------------------------------------------------------------

@@ -660,6 +660,69 @@ def exportar_unidades_con_error(unidades_con_error):
     )
 
 
+def exportar_comparacion_samsara(unidades_comparacion):
+    """Exporta la fotografia completa usada por EnvioMain1."""
+    ruta_archivo = (
+        Path(__file__).parent
+        / "comparacion_telemetria_samsara.csv"
+    )
+
+    columnas = [
+        "ReporteGeneradoMexico",
+        "ParentTagId",
+        "Unidad",
+        "SamsaraVehicleId",
+        "Decision",
+        "Motivo",
+        "Detalle",
+        "EstatusInicial",
+        "EstatusFinal",
+        "MotorFinal",
+        "TiempoDetenidoFinal",
+        "GpsTimeUTC",
+        "GpsTimeMexico",
+        "AntiguedadMinutos",
+        "Latitude",
+        "Longitude",
+        "Coordenadas",
+        "ReverseGeo",
+        "GeocercaId",
+        "Geocerca",
+        "SpeedMilesPerHour",
+        "SpeedUsadaPorFiltro",
+        "IsEcuSpeed",
+    ]
+
+    df_comparacion = pd.DataFrame(
+        unidades_comparacion,
+        columns=columnas
+    )
+
+    if not df_comparacion.empty:
+        df_comparacion = df_comparacion.sort_values(
+            by=["Decision", "Unidad"],
+            ascending=[True, True]
+        )
+
+    df_comparacion.to_csv(
+        ruta_archivo,
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    print(
+        f"[Comparacion] Archivo generado: "
+        f"{ruta_archivo} | "
+        f"Filas={len(df_comparacion)}"
+    )
+
+    logging.info(
+        f"Archivo de comparacion generado: "
+        f"{ruta_archivo} | "
+        f"Filas={len(df_comparacion)}"
+    )
+
+
 # ----------------------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------------------
@@ -814,6 +877,7 @@ def main():
 
     unidades_excluidas = []
     unidades_con_error = []
+    unidades_comparacion = []
 
     now_mx = datetime.now(
         pytz.timezone(MX_TZ)
@@ -832,6 +896,49 @@ def main():
         unidad_nombre = str(
             u.get("name", "Sin nombre")
         )
+
+        registro_comparacion = {
+            "ReporteGeneradoMexico": now_mx.strftime(
+                "%Y-%m-%d %H:%M:%S %Z"
+            ),
+            "ParentTagId": PARENT_TAG_ID,
+            "Unidad": unidad_nombre,
+            "SamsaraVehicleId": unidad_id,
+            "Decision": "",
+            "Motivo": "",
+            "Detalle": "",
+            "EstatusInicial": "",
+            "EstatusFinal": "",
+            "MotorFinal": "",
+            "TiempoDetenidoFinal": "",
+            "GpsTimeUTC": "",
+            "GpsTimeMexico": "",
+            "AntiguedadMinutos": None,
+            "Latitude": "",
+            "Longitude": "",
+            "Coordenadas": "",
+            "ReverseGeo": "",
+            "GeocercaId": "",
+            "Geocerca": "",
+            "SpeedMilesPerHour": None,
+            "SpeedUsadaPorFiltro": None,
+            "IsEcuSpeed": None,
+        }
+
+        def registrar_comparacion(
+            decision,
+            motivo="",
+            detalle="",
+            estatus=""
+        ):
+            registro = registro_comparacion.copy()
+            registro.update({
+                "Decision": decision,
+                "Motivo": motivo,
+                "Detalle": detalle,
+                "EstatusInicial": estatus,
+            })
+            unidades_comparacion.append(registro)
 
         try:
             gps = u.get("gps") or {}
@@ -856,9 +963,22 @@ def main():
                 False
             )
 
-            # ----------------------------------------------------------
-            # FILTRO 1: GPS VIEJO
-            # ----------------------------------------------------------
+            reverse_geo = (
+                gps.get("reverseGeo") or {}
+            )
+
+            location = reverse_geo.get(
+                "formattedLocation",
+                ""
+            )
+
+            lat = gps.get("latitude", "")
+            lon = gps.get("longitude", "")
+            lat_long = f"{lat},{lon}"
+
+            loc_time = None
+            antiguedad_minutos = None
+
             if gps_time:
                 loc_time = dp.parse(
                     gps_time
@@ -867,13 +987,37 @@ def main():
                 )
 
                 antiguedad = now_mx - loc_time
+                antiguedad_minutos = int(
+                    antiguedad.total_seconds() / 60
+                )
 
+            registro_comparacion.update({
+                "GpsTimeUTC": gps_time or "",
+                "GpsTimeMexico": (
+                    loc_time.strftime(
+                        "%Y-%m-%d %H:%M:%S %Z"
+                    )
+                    if loc_time
+                    else ""
+                ),
+                "AntiguedadMinutos": antiguedad_minutos,
+                "Latitude": lat,
+                "Longitude": lon,
+                "Coordenadas": lat_long,
+                "ReverseGeo": location,
+                "GeocercaId": geocerca_id,
+                "Geocerca": geocerca_name,
+                "SpeedMilesPerHour": speed,
+                "SpeedUsadaPorFiltro": speed,
+                "IsEcuSpeed": ecu,
+            })
+
+            # ----------------------------------------------------------
+            # FILTRO 1: GPS VIEJO
+            # ----------------------------------------------------------
+            if gps_time:
                 if antiguedad > timedelta(hours=1):
                     omitidas_gps_viejo += 1
-
-                    antiguedad_minutos = int(
-                        antiguedad.total_seconds() / 60
-                    )
 
                     unidades_excluidas.append({
                         "Unidad": unidad_nombre,
@@ -891,6 +1035,17 @@ def main():
                         "IsEcuSpeed": ecu,
                         "GpsTime": gps_time,
                     })
+
+                    registrar_comparacion(
+                        decision="EXCLUIDA",
+                        motivo="GPS VIEJO",
+                        detalle=(
+                            f"Ultimo GPS: "
+                            f"{loc_time.strftime('%Y-%m-%d %H:%M:%S')} | "
+                            f"Antiguedad minutos: "
+                            f"{antiguedad_minutos}"
+                        )
+                    )
 
                     print(
                         f"[EXCLUIDA GPS VIEJO] "
@@ -923,6 +1078,15 @@ def main():
                     "GpsTime": gps_time,
                 })
 
+                registrar_comparacion(
+                    decision="EXCLUIDA",
+                    motivo="GEOCERCA ESPECIAL",
+                    detalle=(
+                        "La geocerca esta dentro de "
+                        "predefined_special"
+                    )
+                )
+
                 print(
                     f"[EXCLUIDA GEOCERCA ESPECIAL] "
                     f"Unidad={unidad_nombre} | "
@@ -948,6 +1112,9 @@ def main():
 
             if geocerca_detectada:
                 omitidas_patio += 1
+                registro_comparacion[
+                    "Geocerca"
+                ] = geocerca_detectada
 
                 unidades_excluidas.append({
                     "Unidad": unidad_nombre,
@@ -964,6 +1131,15 @@ def main():
                     "GpsTime": gps_time,
                 })
 
+                registrar_comparacion(
+                    decision="EXCLUIDA",
+                    motivo="PATIO/GEOCERCA EC5",
+                    detalle=(
+                        f"La geocerca pertenece al tag "
+                        f"{PARENT_TAG_ID}"
+                    )
+                )
+
                 print(
                     f"[EXCLUIDA PATIO] "
                     f"Unidad={unidad_nombre} | "
@@ -979,6 +1155,10 @@ def main():
             # ----------------------------------------------------------
             if speed is None:
                 speed = 0
+
+            registro_comparacion[
+                "SpeedUsadaPorFiltro"
+            ] = speed
 
             if speed == 0 and not ecu:
                 omitidas_sin_ecu += 1
@@ -998,6 +1178,15 @@ def main():
                     "GpsTime": gps_time,
                 })
 
+                registrar_comparacion(
+                    decision="EXCLUIDA",
+                    motivo="SPEED 0 SIN ECU",
+                    detalle=(
+                        "speedMilesPerHour es 0 y "
+                        "isEcuSpeed es False"
+                    )
+                )
+
                 print(
                     f"[EXCLUIDA SIN ECU] "
                     f"Unidad={unidad_nombre} | "
@@ -1015,19 +1204,6 @@ def main():
                 status = "DETENIDO"
             else:
                 status = "RUTA"
-
-            reverse_geo = (
-                gps.get("reverseGeo") or {}
-            )
-
-            location = reverse_geo.get(
-                "formattedLocation",
-                ""
-            )
-
-            lat = gps.get("latitude", "")
-            lon = gps.get("longitude", "")
-            lat_long = f"{lat},{lon}"
 
             print(
                 f"[INCLUIDA] "
@@ -1059,6 +1235,15 @@ def main():
                 "EcuSpeedActual": None,
             })
 
+            registrar_comparacion(
+                decision="INCLUIDA",
+                motivo="CUMPLE FILTROS",
+                detalle=(
+                    "La unidad se incluyo en el reporte"
+                ),
+                estatus=status
+            )
+
         except Exception as error:
             logging.exception(
                 f"Error procesando unidad "
@@ -1070,6 +1255,12 @@ def main():
                 "SamsaraVehicleId": unidad_id,
                 "Error": str(error),
             })
+
+            registrar_comparacion(
+                decision="ERROR",
+                motivo="ERROR DE PROCESAMIENTO",
+                detalle=str(error)
+            )
 
             print(
                 f"[ERROR UNIDAD] "
@@ -1122,6 +1313,11 @@ def main():
 
     print(
         f"Diferencia: {diferencia}"
+    )
+
+    print(
+        f"Filas para comparacion externa: "
+        f"{len(unidades_comparacion)}"
     )
 
     print("")
@@ -1192,6 +1388,13 @@ def main():
     logging.info(
         f"Unidades con error: "
         f"{len(unidades_con_error)}"
+    )
+
+    logging.info(
+        f"Filas de comparacion: "
+        f"{len(unidades_comparacion)} | "
+        f"Diferencia contra recibidas: "
+        f"{len(vehicles) - len(unidades_comparacion)}"
     )
 
     exportar_unidades_excluidas(
@@ -1266,6 +1469,36 @@ def main():
             f"Ventana={row.get('Ventana Detenido')} | "
             f"Geocerca={row.get('Geocerca')}"
         )
+
+    resultados_por_id = {
+        str(row.get("SamsaraVehicleId", "")): row
+        for row in results
+    }
+
+    for registro in unidades_comparacion:
+        resultado = resultados_por_id.get(
+            str(registro.get("SamsaraVehicleId", ""))
+        )
+
+        if resultado:
+            registro["EstatusFinal"] = resultado.get(
+                "Estatus",
+                ""
+            )
+            registro["MotorFinal"] = resultado.get(
+                "Motor",
+                ""
+            )
+            registro[
+                "TiempoDetenidoFinal"
+            ] = resultado.get(
+                "Tiempo Detenido",
+                ""
+            )
+
+    exportar_comparacion_samsara(
+        unidades_comparacion
+    )
 
     # ------------------------------------------------------------------
     # CONSTRUIR Y ENVIAR MENSAJE

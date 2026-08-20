@@ -1,0 +1,776 @@
+{
+  "generado": "2026-08-19T12:56:34.578162-06:00",
+  "totalEtiquetas": 63,
+  "totalEtiquetasPadre": 12,
+  "etiquetasPadre": [
+    {
+      "id": "5797315",
+      "nombre": "Dispositivos",
+      "parentTagId": "4357031"
+    },
+    {
+      "id": "4363964",
+      "nombre": "EC-01",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363965",
+      "nombre": "EC-02",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363966",
+      "nombre": "EC-03",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363967",
+      "nombre": "EC-05",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363970",
+      "nombre": "EC-08",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "5021095",
+      "nombre": "EC-10",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4436433",
+      "nombre": "Flota",
+      "parentTagId": "4357031"
+    },
+    {
+      "id": "4694308",
+      "nombre": "IMTC",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "6519279",
+      "nombre": "Otros",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4753344",
+      "nombre": "Prueba Telemetria - Casetas",
+      "parentTagId": ""
+    },
+    {
+      "id": "4357031",
+      "nombre": "TDR transportes",
+      "parentTagId": ""
+    }
+  ],
+  "jerarquia": [
+    {
+      "id": "4753344",
+      "nombre": "Prueba Telemetria - Casetas",
+      "parentTagId": "",
+      "hijos": [
+        {
+          "id": "4753345",
+          "nombre": "Casetas 1",
+          "parentTagId": "4753344",
+          "hijos": []
+        },
+        {
+          "id": "4753346",
+          "nombre": "Casetas 2",
+          "parentTagId": "4753344",
+          "hijos": []
+        },
+        {
+          "id": "4753347",
+          "nombre": "Casetas 3",
+          "parentTagId": "4753344",
+          "hijos": []
+        },
+        {
+          "id": "4753348",
+          "nombre": "Casetas 4",
+          "parentTagId": "4753344",
+          "hijos": []
+        }
+      ]
+    },
+    {
+      "id": "4357031",
+      "nombre": "TDR transportes",
+      "parentTagId": "",
+      "hijos": [
+        {
+          "id": "5797315",
+          "nombre": "Dispositivos",
+          "parentTagId": "4357031",
+          "hijos": [
+            {
+              "id": "7328314",
+              "nombre": "Dañados",
+              "parentTagId": "5797315",
+              "hijos": []
+            },
+            {
+              "id": "7328312",
+              "nombre": "Disponibles",
+              "parentTagId": "5797315",
+              "hijos": []
+            }
+          ]
+        },
+        {
+          "id": "4436433",
+          "nombre": "Flota",
+          "parentTagId": "4357031",
+          "hijos": [
+            {
+              "id": "7457408",
+              "nombre": "AF",
+              "parentTagId": "4436433",
+              "hijos": []
+            },
+            {
+              "id": "6519409",
+              "nombre": "Coach",
+              "parentTagId": "4436433",
+              "hijos": []
+            },
+            {
+              "id": "4363964",
+              "nombre": "EC-01",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "8041757",
+                  "nombre": "Available EC-01",
+                  "parentTagId": "4363964",
+                  "hijos": []
+                },
+                {
+                  "id": "4433382",
+                  "nombre": "Liverpool Full",
+                  "parentTagId": "4363964",
+                  "hijos": []
+                },
+                {
+                  "id": "4433380",
+                  "nombre": "Liverpool Local",
+                  "parentTagId": "4363964",
+                  "hijos": []
+                },
+                {
+                  "id": "7827675",
+                  "nombre": "Patio Liverpool",
+                  "parentTagId": "4363964",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "4363965",
+              "nombre": "EC-02",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "8041768",
+                  "nombre": "Available EC-02",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "5152024",
+                  "nombre": "Pasa",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "4433387",
+                  "nombre": "Pilgrims Tepo",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "4433384",
+                  "nombre": "Pipas",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "7353091",
+                  "nombre": "Sayer Full",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "7353092",
+                  "nombre": "Sayer Patios y T.",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "7353093",
+                  "nombre": "Sayer Pipas",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "4357030",
+                  "nombre": "Sayer Sencillo",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "7353094",
+                  "nombre": "Sayer Thorton",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                },
+                {
+                  "id": "7353095",
+                  "nombre": "Sayer Vuelteros",
+                  "parentTagId": "4363965",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "4363966",
+              "nombre": "EC-03",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "8041777",
+                  "nombre": "Available EC-03",
+                  "parentTagId": "4363966",
+                  "hijos": []
+                },
+                {
+                  "id": "4433638",
+                  "nombre": "Circuitos",
+                  "parentTagId": "4363966",
+                  "hijos": []
+                },
+                {
+                  "id": "7353088",
+                  "nombre": "Circuitos Expo",
+                  "parentTagId": "4363966",
+                  "hijos": []
+                },
+                {
+                  "id": "7353084",
+                  "nombre": "Patieros Sucursal",
+                  "parentTagId": "4363966",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "4363967",
+              "nombre": "EC-05",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "7328293",
+                  "nombre": "Available EC-05",
+                  "parentTagId": "4363967",
+                  "hijos": []
+                },
+                {
+                  "id": "4363972",
+                  "nombre": "MeLi Asignado",
+                  "parentTagId": "4363967",
+                  "hijos": []
+                },
+                {
+                  "id": "7353097",
+                  "nombre": "MeLi Dedicado SD",
+                  "parentTagId": "4363967",
+                  "hijos": []
+                },
+                {
+                  "id": "7353098",
+                  "nombre": "MeLi Dedicado TD",
+                  "parentTagId": "4363967",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "4363970",
+              "nombre": "EC-08",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "8080000",
+                  "nombre": "Available EC-08",
+                  "parentTagId": "4363970",
+                  "hijos": []
+                },
+                {
+                  "id": "5199942",
+                  "nombre": "Walmart Full",
+                  "parentTagId": "4363970",
+                  "hijos": []
+                },
+                {
+                  "id": "6342974",
+                  "nombre": "Walmart Full SC",
+                  "parentTagId": "4363970",
+                  "hijos": []
+                },
+                {
+                  "id": "4713211",
+                  "nombre": "Walmart Sencillo",
+                  "parentTagId": "4363970",
+                  "hijos": []
+                },
+                {
+                  "id": "6342838",
+                  "nombre": "Walmart Sencillo SC",
+                  "parentTagId": "4363970",
+                  "hijos": []
+                },
+                {
+                  "id": "5379379",
+                  "nombre": "Wm Backhaul",
+                  "parentTagId": "4363970",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "5021095",
+              "nombre": "EC-10",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "8041899",
+                  "nombre": "Available EC-10",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "5059916",
+                  "nombre": "Conductores",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "7457303",
+                  "nombre": "Conductores Full",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "4433649",
+                  "nombre": "Crisa",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "4984761",
+                  "nombre": "Mabe",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "5138740",
+                  "nombre": "Mabe Bundy",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "5138742",
+                  "nombre": "Mabe Componentes",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "5138744",
+                  "nombre": "Mabe Loyalty",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "8041900",
+                  "nombre": "Mabe PT",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                },
+                {
+                  "id": "6862126",
+                  "nombre": "Patieros Crisa",
+                  "parentTagId": "5021095",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "4694308",
+              "nombre": "IMTC",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "7340855",
+                  "nombre": "Operador Nuevo Ingreso",
+                  "parentTagId": "4694308",
+                  "hijos": []
+                },
+                {
+                  "id": "5872458",
+                  "nombre": "Trainee",
+                  "parentTagId": "4694308",
+                  "hijos": []
+                }
+              ]
+            },
+            {
+              "id": "6519279",
+              "nombre": "Otros",
+              "parentTagId": "4436433",
+              "hijos": [
+                {
+                  "id": "4852382",
+                  "nombre": "AT11 MPV 360",
+                  "parentTagId": "6519279",
+                  "hijos": []
+                },
+                {
+                  "id": "4992158",
+                  "nombre": "Remolques",
+                  "parentTagId": "6519279",
+                  "hijos": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "5863111",
+          "nombre": "Usuarios",
+          "parentTagId": "4357031",
+          "hijos": []
+        }
+      ]
+    }
+  ],
+  "etiquetas": [
+    {
+      "id": "7457408",
+      "nombre": "AF",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4852382",
+      "nombre": "AT11 MPV 360",
+      "parentTagId": "6519279"
+    },
+    {
+      "id": "8041757",
+      "nombre": "Available EC-01",
+      "parentTagId": "4363964"
+    },
+    {
+      "id": "8041768",
+      "nombre": "Available EC-02",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "8041777",
+      "nombre": "Available EC-03",
+      "parentTagId": "4363966"
+    },
+    {
+      "id": "7328293",
+      "nombre": "Available EC-05",
+      "parentTagId": "4363967"
+    },
+    {
+      "id": "8080000",
+      "nombre": "Available EC-08",
+      "parentTagId": "4363970"
+    },
+    {
+      "id": "8041899",
+      "nombre": "Available EC-10",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "4753345",
+      "nombre": "Casetas 1",
+      "parentTagId": "4753344"
+    },
+    {
+      "id": "4753346",
+      "nombre": "Casetas 2",
+      "parentTagId": "4753344"
+    },
+    {
+      "id": "4753347",
+      "nombre": "Casetas 3",
+      "parentTagId": "4753344"
+    },
+    {
+      "id": "4753348",
+      "nombre": "Casetas 4",
+      "parentTagId": "4753344"
+    },
+    {
+      "id": "4433638",
+      "nombre": "Circuitos",
+      "parentTagId": "4363966"
+    },
+    {
+      "id": "7353088",
+      "nombre": "Circuitos Expo",
+      "parentTagId": "4363966"
+    },
+    {
+      "id": "6519409",
+      "nombre": "Coach",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "5059916",
+      "nombre": "Conductores",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "7457303",
+      "nombre": "Conductores Full",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "4433649",
+      "nombre": "Crisa",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "7328314",
+      "nombre": "Dañados",
+      "parentTagId": "5797315"
+    },
+    {
+      "id": "7328312",
+      "nombre": "Disponibles",
+      "parentTagId": "5797315"
+    },
+    {
+      "id": "5797315",
+      "nombre": "Dispositivos",
+      "parentTagId": "4357031"
+    },
+    {
+      "id": "4363964",
+      "nombre": "EC-01",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363965",
+      "nombre": "EC-02",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363966",
+      "nombre": "EC-03",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363967",
+      "nombre": "EC-05",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4363970",
+      "nombre": "EC-08",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "5021095",
+      "nombre": "EC-10",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4436433",
+      "nombre": "Flota",
+      "parentTagId": "4357031"
+    },
+    {
+      "id": "4694308",
+      "nombre": "IMTC",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "4433382",
+      "nombre": "Liverpool Full",
+      "parentTagId": "4363964"
+    },
+    {
+      "id": "4433380",
+      "nombre": "Liverpool Local",
+      "parentTagId": "4363964"
+    },
+    {
+      "id": "4984761",
+      "nombre": "Mabe",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "5138740",
+      "nombre": "Mabe Bundy",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "5138742",
+      "nombre": "Mabe Componentes",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "5138744",
+      "nombre": "Mabe Loyalty",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "8041900",
+      "nombre": "Mabe PT",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "4363972",
+      "nombre": "MeLi Asignado",
+      "parentTagId": "4363967"
+    },
+    {
+      "id": "7353097",
+      "nombre": "MeLi Dedicado SD",
+      "parentTagId": "4363967"
+    },
+    {
+      "id": "7353098",
+      "nombre": "MeLi Dedicado TD",
+      "parentTagId": "4363967"
+    },
+    {
+      "id": "7340855",
+      "nombre": "Operador Nuevo Ingreso",
+      "parentTagId": "4694308"
+    },
+    {
+      "id": "6519279",
+      "nombre": "Otros",
+      "parentTagId": "4436433"
+    },
+    {
+      "id": "5152024",
+      "nombre": "Pasa",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "6862126",
+      "nombre": "Patieros Crisa",
+      "parentTagId": "5021095"
+    },
+    {
+      "id": "7353084",
+      "nombre": "Patieros Sucursal",
+      "parentTagId": "4363966"
+    },
+    {
+      "id": "7827675",
+      "nombre": "Patio Liverpool",
+      "parentTagId": "4363964"
+    },
+    {
+      "id": "4433387",
+      "nombre": "Pilgrims Tepo",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "4433384",
+      "nombre": "Pipas",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "4753344",
+      "nombre": "Prueba Telemetria - Casetas",
+      "parentTagId": ""
+    },
+    {
+      "id": "4992158",
+      "nombre": "Remolques",
+      "parentTagId": "6519279"
+    },
+    {
+      "id": "7353091",
+      "nombre": "Sayer Full",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "7353092",
+      "nombre": "Sayer Patios y T.",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "7353093",
+      "nombre": "Sayer Pipas",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "4357030",
+      "nombre": "Sayer Sencillo",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "7353094",
+      "nombre": "Sayer Thorton",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "7353095",
+      "nombre": "Sayer Vuelteros",
+      "parentTagId": "4363965"
+    },
+    {
+      "id": "4357031",
+      "nombre": "TDR transportes",
+      "parentTagId": ""
+    },
+    {
+      "id": "5872458",
+      "nombre": "Trainee",
+      "parentTagId": "4694308"
+    },
+    {
+      "id": "5863111",
+      "nombre": "Usuarios",
+      "parentTagId": "4357031"
+    },
+    {
+      "id": "5199942",
+      "nombre": "Walmart Full",
+      "parentTagId": "4363970"
+    },
+    {
+      "id": "6342974",
+      "nombre": "Walmart Full SC",
+      "parentTagId": "4363970"
+    },
+    {
+      "id": "4713211",
+      "nombre": "Walmart Sencillo",
+      "parentTagId": "4363970"
+    },
+    {
+      "id": "6342838",
+      "nombre": "Walmart Sencillo SC",
+      "parentTagId": "4363970"
+    },
+    {
+      "id": "5379379",
+      "nombre": "Wm Backhaul",
+      "parentTagId": "4363970"
+    }
+  ]
+}

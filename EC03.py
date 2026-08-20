@@ -306,7 +306,7 @@ def fetch_samsara_data():
         print(f"{r['Unidad']} | {r['Estatus']} | {r['Ubicacion']} | {r['UltEvento']}")
 
     # 3) Excel: cargar plantilla (o crear simple)
-    plantilla_path = BASE_DIR / 'PlantillaEC03.xlsx'
+    plantilla_path = BASE_DIR / "assets" / "templates" / "PlantillaEC03.xlsx"
     if plantilla_path.exists():
         wb = load_workbook(filename=plantilla_path)
         ws = wb.active
@@ -403,7 +403,7 @@ def fetch_samsara_data():
     ws.column_dimensions["M"].width = 14
 
     # Logo (opcional)
-    img_path = BASE_DIR / "TDR-LOGO.png"
+    img_path = BASE_DIR / "assets" / "images" / "TDR-LOGO.png"
     if img_path.exists():
         try:
             logo = Image(str(img_path))

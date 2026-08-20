@@ -1,0 +1,156 @@
+{
+  "zona_horaria": "America/Mexico_City",
+  "catalogo_etiquetas": "config/catalogo_etiquetas_samsara.json",
+  "google_sheets": { "activo": true },
+  "filtros_base": {
+    "gps_max_minutos": 60,
+    "excluir_speed_cero_sin_ecu": true,
+    "geocercas_especiales_ids": [
+      "254792506", "254801835", "254802588", "254803338",
+      "254859196", "94193861", "95243156", "95243200",
+      "95243316", "95243513", "244349505", "245970120",
+      "254794170", "254794716", "257477773"
+    ],
+    "excluir_unidades_en_geocerca": false,
+    "etiquetas_geocercas_excluidas": [],
+    "etiqueta_ids_geocercas_excluidas": []
+  },
+  "perfiles_filtros": {
+    "EC-05": {
+      "excluir_unidades_en_geocerca": true,
+      "etiquetas_geocercas_excluidas": ["EC-05"]
+    },
+    "EC-02": {
+      "incluir_todas_las_unidades": true,
+      "gps_max_minutos": null,
+      "excluir_speed_cero_sin_ecu": false,
+      "excluir_unidades_en_geocerca": false,
+      "etiquetas_geocercas_excluidas": [],
+      "etiqueta_ids_geocercas_excluidas": [],
+      "geocercas_especiales_ids": []
+    }
+  },
+  "reportes": [
+    {
+      "nombre": "Reporte Sayer",
+      "equipo": "Equipo Sayer",
+      "activo": false,
+      "perfil_filtros": "EC-02",
+      "tipo_filtro_etiqueta": "tagIds",
+      "etiquetas": [
+        "Sayer Full",
+        "Sayer Patios y T.",
+        "Sayer Pipas",
+        "Sayer Sencillo",
+        "Sayer Thorton",
+        "Sayer Vuelteros"
+      ],
+      "analizar_detenciones": true,
+      "contenido": {
+        "estados": [],
+        "unidades": [],
+        "columnas": [
+          "Unidad", "Estatus", "Tiempo Detenido", "Tiempo Trafico",
+          "Motor", "Fecha GPS", "Ubicación", "Latitud", "Longitud",
+          "Coordenadas", "Geocerca",
+          "Velocidad Mph", "IsEcuSpeed", "PLACAS", "ID ROSTERING"
+        ],
+        "incluir_omitidas_excel": true
+      },
+      "entregas": [
+        {
+          "canal": "google_chat",
+          "activo": false,
+          "webhook_env": "GOOGLE_CHAT_WEBHOOK_URL"
+        },
+        {
+          "canal": "correo",
+          "activo": true,
+          "destinatarios": [],
+          "destinatarios_env": "MAIL_TO",
+          "asunto": "{nombre} - {fecha} {hora}",
+          "cuerpo": "Hola {equipo},\n\nSe adjunta el reporte {nombre} generado el {fecha} a las {hora}."
+        }
+      ]
+    },
+    {
+      "nombre": "Reporte EC-05",
+      "equipo": "Equipo EC-05",
+      "activo": true,
+      "perfil_filtros": "EC-05",
+      "tipo_filtro_etiqueta": "parentTagIds",
+      "etiquetas": ["EC-05"],
+      "analizar_detenciones": true,
+      "contenido": {
+        "estados": [],
+        "unidades": [],
+        "columnas": [
+          "Unidad", "Estatus", "Tiempo Detenido", "Motor", "Fecha GPS",
+          "Ubicación", "Latitud", "Longitud", "Coordenadas", "Geocerca",
+          "Velocidad Mph", "IsEcuSpeed", "PLACAS", "ID ROSTERING"
+        ],
+        "incluir_omitidas_excel": true
+      },
+      "entregas": [
+        {
+          "canal": "google_chat",
+          "activo": true,
+          "webhook_env": "GOOGLE_CHAT_WEBHOOK_URL"
+        },
+        {
+          "canal": "correo",
+          "activo": false,
+          "destinatarios": [],
+          "destinatarios_env": "MAIL_TO",
+          "asunto": "{nombre} - {fecha} {hora}",
+          "cuerpo": "Hola {equipo},\n\nSe adjunta el reporte {nombre}."
+        }
+      ]
+    },
+    {
+      "nombre": "Reporte EC-02",
+      "equipo": "Equipo EC-02",
+      "activo": false,
+      "perfil_filtros": "EC-02",
+      "tipo_filtro_etiqueta": "tagIds",
+      "etiquetas": [
+        "Sayer Full",
+        "Sayer Patios y T.",
+        "Sayer Pipas",
+        "Sayer Sencillo",
+        "Sayer Thorton",
+        "Sayer Vuelteros"
+      ],
+      "analizar_detenciones": false,
+      "enriquecer_google_sheets": false,
+      "enriquecer_operadores_samsara": true,
+      "operadores_ventana_horas": 24,
+      "contenido": {
+        "estados": [],
+        "unidades": [],
+        "columnas": [
+          "Unidad", "Estatus", "Operador", "Ubicación", "Coordenadas", "Geocerca"
+        ],
+        "orden_estados": ["DETENIDO", "RUTA"],
+        "resumen_estados_excel": true,
+        "incluir_resumen_excel": false,
+        "incluir_omitidas_excel": false
+      },
+      "entregas": [
+        {
+          "canal": "google_chat",
+          "activo": false,
+          "webhook_env": "GOOGLE_CHAT_WEBHOOK_URL_EC02"
+        },
+        {
+          "canal": "correo",
+          "activo": false,
+          "destinatarios": [],
+          "destinatarios_env": "MAIL_TO",
+          "asunto": "{nombre} - {fecha} {hora}",
+          "cuerpo": "Hola {equipo},\n\nSe adjunta el reporte {nombre}."
+        }
+      ]
+    }
+  ]
+}
