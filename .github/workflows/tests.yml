@@ -23,7 +23,8 @@ jobs:
       - name: Compile core modules
         run: >-
           python -m py_compile
-          EnvioMain.py EnvioMain1.py detenciones.py minutosdetenidosenvio.py
+          EnvioMain.py EnvioMainTest.py LogitrackEstatus.py detenciones.py minutosdetenidosenvio.py
+          scripts/diagnosticar_samsara_logitrack.py
           UltimaUbicacion.py tools/trackear_diferencias_samsara.py
 
       - name: Run unit tests

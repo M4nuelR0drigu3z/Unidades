@@ -7,4 +7,5 @@ python-dotenv==1.2.2
 python_dateutil==2.9.0.post0
 pytz==2025.2
 requests==2.33.1
+XlsxWriter>=3.2.0,<4
 xlrd==2.0.2

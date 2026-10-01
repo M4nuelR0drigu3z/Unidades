@@ -11,6 +11,7 @@ from email.message import EmailMessage
 from io import BytesIO
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -30,7 +31,13 @@ from openpyxl.utils import get_column_letter
 import pytz
 import requests
 
-from detenciones import enriquecer_minutos_detenido
+from detenciones import enriquecer_minutos_detenido, haversine_meters
+from LogitrackEstatus import (
+    DEFAULT_API_URL as LOGITRACK_DEFAULT_API_URL,
+    DEFAULT_TOKEN_URL as LOGITRACK_DEFAULT_TOKEN_URL,
+    fetch_last_status,
+    request_access_token,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -39,6 +46,7 @@ DEFAULT_TAG_CATALOG_PATH = BASE_DIR / "config" / "catalogo_etiquetas_samsara.jso
 SAMSARA_BASE_URL = "https://api.samsara.com"
 DEFAULT_TIMEZONE = "America/Mexico_City"
 MAX_GOOGLE_CHAT_CHARS = 30_000
+WEBHOOK_PRUEBAS_ENV = "GOOGLE_CHAT_WEBHOOK_URL_PRUEBAS"
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 logging.basicConfig(
@@ -60,6 +68,620 @@ def normalizar_texto(valor: Any) -> str:
 
 def slug(valor: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", normalizar_texto(valor)).strip("_") or "reporte"
+
+
+KMH_POR_MPH = 1.609344
+MOTIVOS_SAMSARA_SIN_GPS_VIGENTE = {"GPS VIEJO", "GPS SIN FECHA"}
+
+
+def normalizar_nombre_unidad(
+    valor: Any, sufijos: Iterable[str] = ("TDR",)
+) -> str:
+    """Construye una llave comun para nombres de unidad de ambos proveedores.
+
+    Ignora mayusculas, espacios, guiones, ceros a la izquierda y el identificador
+    de empresa al inicio o al final: 2234 - TDR, 2234tdr y TDR-02234 dan 2234.
+    """
+    llave = re.sub(r"[^a-z0-9]+", "", normalizar_texto(valor))
+    tokens = [
+        token for token in (re.sub(r"[^a-z0-9]+", "", normalizar_texto(s)) for s in sufijos)
+        if token
+    ]
+    recortada = True
+    while recortada:
+        recortada = False
+        for token in tokens:
+            if llave != token and llave.endswith(token):
+                llave, recortada = llave[: -len(token)], True
+            if llave != token and llave.startswith(token):
+                llave, recortada = llave[len(token):], True
+    if not llave:
+        return ""
+    return llave.lstrip("0") or "0"
+
+
+def parsear_fecha_logitrack(valor: Any, now_mx: datetime) -> datetime | None:
+    if not valor:
+        return None
+    try:
+        fecha = dp.parse(str(valor))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if fecha.tzinfo is None:
+        zona = pytz.timezone(getattr(now_mx.tzinfo, "zone", DEFAULT_TIMEZONE))
+        fecha = zona.localize(fecha)
+    return fecha.astimezone(now_mx.tzinfo)
+
+
+def convertir_float(valor: Any) -> float | None:
+    if valor is None or str(valor).strip() == "":
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def motor_logitrack(status: dict[str, Any]) -> str:
+    encendido = status.get("engine_ign")
+    if encendido is None:
+        encendido = status.get("io_ign")
+    texto = str(encendido).strip()
+    return "ON" if texto == "1" else "OFF" if texto == "0" else ""
+
+
+def indexar_estatus_logitrack(
+    statuses: Iterable[dict[str, Any]],
+    now_mx: datetime,
+    settings: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Indexa por unidad y conserva el reporte mas reciente ante duplicados."""
+    sufijos = settings.get("sufijos_unidad") or ["TDR"]
+    indice: dict[str, dict[str, Any]] = {}
+    for status in statuses:
+        llave = normalizar_nombre_unidad(status.get("unit_name"), sufijos)
+        if not llave:
+            continue
+        fecha = parsear_fecha_logitrack(
+            status.get("datetime") or status.get("event_time"), now_mx
+        )
+        anterior = indice.get(llave)
+        fecha_anterior = (anterior or {}).get("_fecha_logitrack")
+        if anterior is None or (fecha and (fecha_anterior is None or fecha > fecha_anterior)):
+            item = dict(status)
+            item["_fecha_logitrack"] = fecha
+            indice[llave] = item
+    return indice
+
+
+def leer_status_logitrack(
+    status: dict[str, Any], now_mx: datetime, settings: dict[str, Any]
+) -> dict[str, Any]:
+    """Resume una lectura Logitrack: antiguedad, vigencia, velocidad (km/h) y estado."""
+    max_antiguedad = int(settings.get("max_antiguedad_minutos", 60))
+    stop_logitrack = float(
+        settings.get(
+            "velocidad_detenido_logitrack_kmh",
+            settings.get("velocidad_detenido_logitrack", 5),
+        )
+    )
+    fecha = status.get("_fecha_logitrack")
+    antiguedad = (now_mx - fecha).total_seconds() / 60 if fecha is not None else None
+    fresco = antiguedad is not None and -5 <= antiguedad <= max_antiguedad
+    velocidad = convertir_float(status.get("speed"))
+    detenido = None if velocidad is None else velocidad <= stop_logitrack
+    if not fresco:
+        estado = "DESACTUALIZADO"
+    elif detenido is None:
+        estado = "SIN VELOCIDAD"
+    else:
+        estado = "DETENIDO" if detenido else "RUTA"
+    return {
+        "fecha": fecha,
+        "fresco": fresco,
+        "velocidad": velocidad,
+        "detenido": detenido,
+        "campos": {
+            "Logitrack Encontrado": "SI",
+            "Estatus Logitrack": estado,
+            "Fecha Logitrack": fecha,
+            "Antiguedad Logitrack Min": round(antiguedad, 1) if antiguedad is not None else None,
+            "Velocidad Logitrack": velocidad,
+            "Motor Logitrack": motor_logitrack(status),
+            "Ubicación Logitrack": str(status.get("address") or ""),
+            "Logitrack Fresco": "SI" if fresco else "NO",
+        },
+    }
+
+
+def enriquecer_con_logitrack(
+    results: list[dict[str, Any]],
+    statuses: Iterable[dict[str, Any]],
+    now_mx: datetime,
+    settings: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Cruza la lectura actual de ambas telemetrias y elige la mas real.
+
+    Si coinciden, la lectura queda respaldada por ambas; si difieren, gana la mas
+    reciente. La distancia tolerada crece con la velocidad y el desfase entre
+    lecturas, porque una unidad en ruta avanza entre un reporte y otro.
+    """
+    indice = indexar_estatus_logitrack(statuses, now_mx, settings)
+    sufijos = settings.get("sufijos_unidad") or ["TDR"]
+    distancia_base = float(settings.get("distancia_detenido_metros", 150))
+    factor = float(settings.get("factor_tolerancia_movimiento", 1.3))
+    desfase_minimo = float(settings.get("desfase_minimo_minutos", 1))
+    velocidad_maxima = float(settings.get("velocidad_maxima_plausible_kmh", 120))
+    stop_samsara = float(settings.get("velocidad_detenido_samsara_mph", 3))
+    encontrados = frescos = dobles = desacuerdos = lejanas = 0
+    distancias_detenidas: list[float] = []
+
+    for row in results:
+        estatus_samsara_actual = str(row.get("Estatus") or "")
+        row.update({
+            "Estatus Samsara Actual": estatus_samsara_actual,
+            "Logitrack Encontrado": "NO",
+            "Estatus Logitrack": "SIN COINCIDENCIA",
+            "Fecha Logitrack": None,
+            "Antiguedad Logitrack Min": None,
+            "Velocidad Logitrack": None,
+            "Motor Logitrack": "",
+            "Ubicación Logitrack": "",
+            "Distancia GPS Metros": None,
+            "Distancia Esperada Metros": None,
+            "Desfase Lecturas Min": None,
+            "Ubicación Coincide": "",
+            "Logitrack Fresco": "NO",
+            "Doble Comprobación Actual": "NO",
+            "Fuente Confirmación": "SAMSARA ACTUAL",
+            "Motivo Decisión": "Sin coincidencia en Logitrack",
+        })
+        llave = normalizar_nombre_unidad(row.get("Unidad"), sufijos)
+        status = indice.get(llave)
+        gps_samsara = row.get("GpsActual") or {}
+        velocidad_samsara = convertir_float(gps_samsara.get("speedMilesPerHour")) or 0.0
+        samsara_detenido = velocidad_samsara <= stop_samsara
+
+        # Una lectura Samsara cercana a cero debe revisar historial aunque no
+        # venga marcada como velocidad ECU; Logitrack aporta la segunda senal.
+        if samsara_detenido:
+            row["Estatus"] = "DETENIDO"
+
+        if not status:
+            continue
+        encontrados += 1
+        lectura = leer_status_logitrack(status, now_mx, settings)
+        row.update(lectura["campos"])
+        fecha_logitrack = lectura["fecha"]
+        velocidad_logitrack = lectura["velocidad"]
+        logitrack_detenido = lectura["detenido"]
+
+        # Desfase positivo: la lectura Samsara es mas reciente que la Logitrack.
+        fecha_samsara = row.get("Fecha GPS")
+        if not isinstance(fecha_samsara, datetime):
+            fecha_samsara = now_mx
+        desfase = (
+            (fecha_samsara - fecha_logitrack).total_seconds() / 60
+            if fecha_logitrack is not None else None
+        )
+        distancia = None
+        try:
+            distancia = haversine_meters(
+                gps_samsara.get("latitude"),
+                gps_samsara.get("longitude"),
+                status.get("lat"),
+                status.get("lon"),
+            )
+        except (TypeError, ValueError):
+            pass
+        # Solo la velocidad de una unidad en movimiento explica distancia entre
+        # lecturas; la deriva GPS de una unidad detenida no debe ampliar la tolerancia.
+        segundos_desfase = abs(desfase or 0) * 60
+        velocidad_movimiento_kmh = max(
+            0 if samsara_detenido else velocidad_samsara * KMH_POR_MPH,
+            0 if logitrack_detenido in (True, None) else velocidad_logitrack,
+        )
+        esperada = distancia_base + velocidad_movimiento_kmh / 3.6 * segundos_desfase * factor
+        maxima = max(esperada, distancia_base + velocidad_maxima / 3.6 * segundos_desfase)
+        coincide = None if distancia is None else distancia <= esperada
+        imposible = distancia is not None and distancia > maxima
+        row.update({
+            "Distancia GPS Metros": round(distancia, 1) if distancia is not None else None,
+            "Distancia Esperada Metros": round(esperada),
+            "Desfase Lecturas Min": round(desfase, 1) if desfase is not None else None,
+            "Ubicación Coincide": "" if coincide is None else "SI" if coincide else "NO",
+        })
+
+        if not lectura["fresco"]:
+            row["Motivo Decisión"] = "La lectura Logitrack excede la antiguedad permitida"
+            continue
+        frescos += 1
+        if imposible:
+            lejanas += 1
+            row["Estatus"] = "REVISAR"
+            row["Fuente Confirmación"] = "SAMSARA VS LOGITRACK"
+            row["Motivo Decisión"] = (
+                f"Ubicación no coincide: {distancia:.0f} m entre equipos en "
+                f"{abs(desfase or 0):.1f} min (máximo posible {maxima:.0f} m)"
+            )
+            continue
+        if logitrack_detenido is None:
+            row["Motivo Decisión"] = "Logitrack no reporta velocidad; se usa Samsara"
+            continue
+
+        if samsara_detenido == logitrack_detenido:
+            row["Fuente Confirmación"] = "SAMSARA + LOGITRACK"
+            if not samsara_detenido:
+                row["Estatus"] = "RUTA"
+                row["Motivo Decisión"] = "Ambas telemetrías reportan movimiento"
+            elif coincide:
+                dobles += 1
+                distancias_detenidas.append(distancia)
+                row["Doble Comprobación Actual"] = "SI"
+                row["Motivo Decisión"] = "Ambas lecturas actuales indican detención y coinciden en ubicación"
+            elif coincide is False:
+                row["Fuente Confirmación"] = "SAMSARA ACTUAL"
+                row["Motivo Decisión"] = (
+                    f"Ambas indican detención a {distancia:.0f} m; la unidad cambió de "
+                    f"posición entre lecturas ({abs(desfase or 0):.1f} min)"
+                )
+            else:
+                row["Fuente Confirmación"] = "SAMSARA ACTUAL"
+                row["Motivo Decisión"] = "Ambas indican detención, sin coordenadas para comparar"
+            continue
+
+        desacuerdos += 1
+        if desfase is not None and desfase <= -desfase_minimo:
+            minutos = abs(desfase)
+            row["Fuente Confirmación"] = "LOGITRACK"
+            if logitrack_detenido:
+                row["Estatus"] = "DETENIDO LOGITRACK"
+                row["Motivo Decisión"] = (
+                    f"Logitrack ({minutos:.1f} min más reciente) reporta detención; "
+                    "Samsara aún reporta movimiento"
+                )
+            else:
+                row["Estatus"] = "RUTA"
+                row["Motivo Decisión"] = (
+                    f"Logitrack ({minutos:.1f} min más reciente) reporta movimiento"
+                )
+        elif samsara_detenido:
+            row["Motivo Decisión"] = (
+                "Samsara (lectura más reciente) reporta detención; Logitrack aún reporta movimiento"
+            )
+        else:
+            row["Estatus"] = "RUTA"
+            row["Motivo Decisión"] = (
+                "Samsara (lectura más reciente) reporta movimiento; Logitrack aún reporta detención"
+            )
+
+    promedio = (
+        f"{sum(distancias_detenidas) / len(distancias_detenidas):.0f} m"
+        if distancias_detenidas else "N/D"
+    )
+    print(
+        f"[Logitrack] Vinculadas={encontrados}/{len(results)} Frescas={frescos} "
+        f"DobleSenalDetenida={dobles} Desacuerdos={desacuerdos} "
+        f"UbicacionNoCoincide={lejanas} DistanciaPromedioDetenidas={promedio}"
+    )
+    sin_match = [str(r.get("Unidad")) for r in results if r.get("Logitrack Encontrado") == "NO"]
+    if sin_match:
+        print(f"[Logitrack] Sin coincidencia: {', '.join(sin_match)}")
+    retraso = mediana_antiguedad_logitrack(results)
+    if retraso is not None and retraso > RETRASO_LOGITRACK_AVISO_MINUTOS:
+        print(f"[Logitrack][AVISO] Lecturas con retraso: mediana {retraso:.0f} min")
+    return results
+
+
+def punto_en_geocerca(lat: Any, lon: Any, geofence: dict[str, Any]) -> bool:
+    """Evalua si una coordenada cae en una geocerca Samsara (circulo o poligono)."""
+    lat, lon = convertir_float(lat), convertir_float(lon)
+    if lat is None or lon is None:
+        return False
+    circulo = geofence.get("circle")
+    if circulo:
+        return haversine_meters(
+            lat, lon, circulo.get("latitude"), circulo.get("longitude")
+        ) <= float(circulo.get("radiusMeters") or 0)
+    vertices = [
+        (float(v["latitude"]), float(v["longitude"]))
+        for v in (geofence.get("polygon") or {}).get("vertices") or []
+    ]
+    dentro = False
+    for (lat1, lon1), (lat2, lon2) in zip(vertices, vertices[-1:] + vertices[:-1]):
+        if (lat1 > lat) != (lat2 > lat):
+            cruce = lon1 + (lat - lat1) * (lon2 - lon1) / (lat2 - lat1)
+            if lon < cruce:
+                dentro = not dentro
+    return dentro
+
+
+def distancia_a_geocerca(lat: Any, lon: Any, geofence: dict[str, Any]) -> float | None:
+    """Metros desde la coordenada al borde de la geocerca; 0 si esta dentro."""
+    lat, lon = convertir_float(lat), convertir_float(lon)
+    if lat is None or lon is None:
+        return None
+    circulo = geofence.get("circle")
+    if circulo:
+        centro = haversine_meters(lat, lon, circulo.get("latitude"), circulo.get("longitude"))
+        return max(0.0, centro - float(circulo.get("radiusMeters") or 0))
+    vertices = (geofence.get("polygon") or {}).get("vertices") or []
+    if not vertices:
+        return None
+    if punto_en_geocerca(lat, lon, geofence):
+        return 0.0
+    # Proyeccion local en metros; suficiente para distancias de pocos kilometros.
+    escala_lon = 111_320 * math.cos(math.radians(lat))
+    puntos = [
+        ((float(v["longitude"]) - lon) * escala_lon, (float(v["latitude"]) - lat) * 110_540)
+        for v in vertices
+    ]
+    minima = None
+    for (x1, y1), (x2, y2) in zip(puntos, puntos[1:] + puntos[:1]):
+        dx, dy = x2 - x1, y2 - y1
+        largo = dx * dx + dy * dy
+        t = 0.0 if largo == 0 else max(0.0, min(1.0, -(x1 * dx + y1 * dy) / largo))
+        distancia = math.hypot(x1 + t * dx, y1 + t * dy)
+        minima = distancia if minima is None else min(minima, distancia)
+    return minima
+
+
+def geocerca_mas_cercana(
+    lat: Any, lon: Any, geocercas: dict[str, dict[str, Any]]
+) -> tuple[str, float] | None:
+    cercana = None
+    for geocerca in geocercas.values():
+        distancia = distancia_a_geocerca(lat, lon, geocerca.get("geofence") or {})
+        if distancia is not None and (cercana is None or distancia < cercana[1]):
+            cercana = (geocerca.get("nombre") or "", distancia)
+    return cercana
+
+
+def obtener_geometrias_geocercas(
+    sesion: requests.Session,
+    etiqueta_ids: Iterable[str],
+    especiales_ids: Iterable[str] = (),
+    direcciones: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Nombre, geometria y motivo de las geocercas excluidas (por etiqueta) y especiales (por ID)."""
+    etiquetas = {str(x) for x in etiqueta_ids if x}
+    especiales = {str(x) for x in especiales_ids if x}
+    if not etiquetas and not especiales:
+        return {}
+    if direcciones is None:
+        direcciones = obtener_paginas(sesion, "/addresses", {"limit": 512})
+    geometrias = {}
+    for d in direcciones:
+        address_id = str(d.get("id") or "")
+        if address_id in especiales:
+            motivo = "GEOCERCA ESPECIAL"
+        elif etiquetas & {str(t.get("id")) for t in d.get("tags") or []}:
+            motivo = "PATIO/GEOCERCA EXCLUIDA"
+        else:
+            continue
+        geometrias[address_id] = {
+            "nombre": str(d.get("name") or ""), "geofence": d.get("geofence") or {}, "motivo": motivo,
+        }
+    return geometrias
+
+
+def excluir_por_coordenadas_en_geocerca(
+    results: list[dict[str, Any]], geocercas: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Excluye unidades cuyas coordenadas caen dentro de una geocerca excluida o especial.
+
+    Samsara no siempre llena gps.address aunque la unidad este dentro de la
+    geocerca, por eso se valida tambien contra el poligono.
+    """
+    conservadas, omitidas = [], []
+    for row in results:
+        geocerca = next(
+            (g for g in geocercas.values()
+             if punto_en_geocerca(row.get("Latitud"), row.get("Longitud"), g.get("geofence") or {})),
+            None,
+        )
+        if geocerca is None:
+            conservadas.append(row)
+            continue
+        omitidas.append({
+            "Unidad": row.get("Unidad"), "SamsaraVehicleId": row.get("SamsaraVehicleId"),
+            "Motivo": geocerca.get("motivo") or "PATIO/GEOCERCA EXCLUIDA",
+            "Detalle": f"Coordenadas dentro de {geocerca['nombre']}; Samsara no reportó la geocerca",
+            "GpsTimeMexico": row.get("Fecha GPS"), "Geocerca": geocerca["nombre"], "GeocercaId": "",
+            "Latitud": row.get("Latitud"), "Longitud": row.get("Longitud"),
+            "Coordenadas": row.get("Coordenadas"), "VelocidadMph": row.get("Velocidad Mph"),
+            "IsEcuSpeed": row.get("IsEcuSpeed"),
+        })
+    if omitidas:
+        detalle = ", ".join(f"{x['Unidad']} ({x['Geocerca']})" for x in omitidas)
+        print(f"[Geocercas] Dentro de geocerca por coordenadas: {len(omitidas)} -> {detalle}")
+    return conservadas, omitidas
+
+
+ESTADOS_DETENIDOS_DEFAULT = (
+    "DETENIDO", "DETENIDO CONFIRMADO", "DETENIDO SAMSARA", "DETENIDO LOGITRACK", "REVISAR",
+)
+
+
+def omitir_detenidas_cerca_de_geocerca(
+    results: list[dict[str, Any]],
+    geocercas: dict[str, dict[str, Any]],
+    distancia_max: float,
+    estados: Iterable[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Omite unidades detenidas junto a un patio: esperan afuera y no llevan viaje."""
+    estados_omitir = {normalizar_texto(x) for x in (estados or ESTADOS_DETENIDOS_DEFAULT)}
+    conservadas, omitidas = [], []
+    for row in results:
+        estatus = str(row.get("Estatus") or "")
+        cercana = None
+        if normalizar_texto(estatus) in estados_omitir:
+            cercana = geocerca_mas_cercana(row.get("Latitud"), row.get("Longitud"), geocercas)
+        if cercana is None or cercana[1] > distancia_max:
+            conservadas.append(row)
+            continue
+        nombre, distancia = cercana
+        omitidas.append({
+            "Unidad": row.get("Unidad"), "SamsaraVehicleId": row.get("SamsaraVehicleId"),
+            "Motivo": "CERCA DE GEOCERCA",
+            "Detalle": f"{estatus} a {distancia:.0f} m de {nombre} (máximo {distancia_max:.0f} m)",
+            "GpsTimeMexico": row.get("Fecha GPS"), "Geocerca": nombre, "GeocercaId": "",
+            "Latitud": row.get("Latitud"), "Longitud": row.get("Longitud"),
+            "Coordenadas": row.get("Coordenadas"), "VelocidadMph": row.get("Velocidad Mph"),
+            "IsEcuSpeed": row.get("IsEcuSpeed"),
+        })
+    if omitidas:
+        detalle = ", ".join(f"{x['Unidad']} ({x['Geocerca']})" for x in omitidas)
+        print(f"[Geocercas] Detenidas cerca de geocerca omitidas: {len(omitidas)} -> {detalle}")
+    return conservadas, omitidas
+
+
+def rescatar_con_logitrack(
+    excluidas: list[dict[str, Any]],
+    statuses: Iterable[dict[str, Any]],
+    now_mx: datetime,
+    settings: dict[str, Any],
+    geocercas: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Usa Logitrack vigente para unidades omitidas porque su GPS Samsara no esta vigente.
+
+    `geocercas` son las geocercas excluidas con su geometria; una unidad que
+    Logitrack ubica dentro de alguna sigue omitida. None significa que no se
+    pudo validar y, por seguridad, no se rescata ninguna unidad.
+    """
+    if not settings.get("usar_logitrack_si_samsara_viejo", True) or geocercas is None:
+        return [], excluidas
+    geocercas = geocercas or {}
+    indice = indexar_estatus_logitrack(statuses, now_mx, settings)
+    sufijos = settings.get("sufijos_unidad") or ["TDR"]
+    rescatadas, restantes = [], []
+    for omitida in excluidas:
+        status = None
+        if omitida.get("Motivo") in MOTIVOS_SAMSARA_SIN_GPS_VIGENTE:
+            status = indice.get(normalizar_nombre_unidad(omitida.get("Unidad"), sufijos))
+        lectura = leer_status_logitrack(status, now_mx, settings) if status else None
+        if not lectura or not lectura["fresco"] or lectura["detenido"] is None:
+            restantes.append(omitida)
+            continue
+        lat, lon = status.get("lat"), status.get("lon")
+        geocerca = next(
+            (g["nombre"] for g in geocercas.values() if punto_en_geocerca(lat, lon, g["geofence"])),
+            None,
+        )
+        if geocerca is not None:
+            restantes.append({
+                **omitida,
+                "Detalle": f"{omitida.get('Detalle') or ''}; Logitrack la ubica en geocerca {geocerca}".lstrip("; "),
+            })
+            continue
+        row = {
+            "Unidad": omitida.get("Unidad"),
+            "SamsaraVehicleId": omitida.get("SamsaraVehicleId"),
+            "Fecha GPS": omitida.get("GpsTimeMexico"),
+            "Ubicación": str(status.get("address") or ""),
+            "Estatus": "DETENIDO LOGITRACK" if lectura["detenido"] else "RUTA",
+            "Velocidad Mph": omitida.get("VelocidadMph"),
+            "IsEcuSpeed": omitida.get("IsEcuSpeed"),
+            "Latitud": lat,
+            "Longitud": lon,
+            "Coordenadas": f"{lat},{lon}" if lat not in (None, "") and lon not in (None, "") else "",
+            "Geocerca": omitida.get("Geocerca", ""),
+            "Estatus Samsara Actual": omitida.get("Motivo"),
+            "Doble Comprobación Actual": "NO",
+            "Fuente Confirmación": "LOGITRACK",
+            "Motivo Decisión": (
+                f"Samsara sin GPS vigente ({omitida.get('Detalle') or omitida.get('Motivo')}); "
+                "se usa Logitrack"
+            ),
+        }
+        row.update(lectura["campos"])
+        rescatadas.append(row)
+    if rescatadas:
+        print(f"[Logitrack] Unidades con GPS Samsara viejo cubiertas por Logitrack: {len(rescatadas)}")
+    return rescatadas, restantes
+
+
+def finalizar_comprobacion_telemetria(
+    results: list[dict[str, Any]], settings: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Convierte el analisis historico en un estatus final auditable."""
+    minimo = int(settings.get("detencion_minima_minutos", 5))
+    for row in results:
+        estado = str(row.get("Estatus") or "").strip()
+        if estado != "DETENIDO":
+            if estado in {"RUTA", "TRAFICO LENTO"} and row.get("Ventana Detenido"):
+                row["Fuente Confirmación"] = "HISTORICO SAMSARA"
+                row["Motivo Decisión"] = "El historial Samsara muestra movimiento reciente"
+            continue
+
+        minutos = row.get("Minutos Detenido")
+        historia_confirma = isinstance(minutos, (int, float)) and minutos >= minimo
+        doble_actual = row.get("Doble Comprobación Actual") == "SI"
+        if historia_confirma and doble_actual:
+            row["Estatus"] = "DETENIDO CONFIRMADO"
+            row["Fuente Confirmación"] = "HISTORICO SAMSARA + LOGITRACK"
+            row["Motivo Decisión"] = "Historial estacionario y doble lectura actual coincidente"
+        elif historia_confirma:
+            row["Estatus"] = "DETENIDO SAMSARA"
+            row["Fuente Confirmación"] = "HISTORICO SAMSARA"
+            if row.get("Logitrack Fresco") == "SI":
+                row["Motivo Decisión"] = "Historial detenido, pero Logitrack no coincide"
+            else:
+                row["Motivo Decisión"] = "Historial detenido sin una lectura Logitrack vigente"
+        else:
+            row["Estatus"] = "REVISAR"
+            row["Fuente Confirmación"] = "INFORMACION INSUFICIENTE"
+            row["Motivo Decisión"] = f"No se confirmaron al menos {minimo} minutos de detención"
+    return results
+
+
+RETRASO_LOGITRACK_AVISO_MINUTOS = 10
+
+
+def mediana_antiguedad_logitrack(results: Iterable[dict[str, Any]]) -> float | None:
+    edades = sorted(
+        row["Antiguedad Logitrack Min"] for row in results
+        if isinstance(row.get("Antiguedad Logitrack Min"), (int, float))
+    )
+    return edades[len(edades) // 2] if edades else None
+
+
+def resumen_telemetria(results: list[dict[str, Any]]) -> list[str]:
+    """Lineas de calidad del cruce Samsara vs Logitrack para el mensaje de Chat."""
+    if not any("Logitrack Encontrado" in row for row in results):
+        return []
+    vinculadas = sum(1 for row in results if row.get("Logitrack Encontrado") == "SI")
+    distancias = sorted(
+        row["Distancia GPS Metros"] for row in results
+        if row.get("Doble Comprobación Actual") == "SI"
+        and isinstance(row.get("Distancia GPS Metros"), (int, float))
+    )
+    lejanas = sum(
+        1 for row in results
+        if str(row.get("Motivo Decisión") or "").startswith("Ubicación no coincide")
+    )
+    lineas = [
+        "", "📡 *Samsara vs Logitrack*",
+        f"🔗 Vinculadas: {vinculadas}/{len(results)}",
+        f"🤝 Detenidas en ambas: {len(distancias)}",
+    ]
+    retraso = mediana_antiguedad_logitrack(results)
+    if retraso is not None and retraso > RETRASO_LOGITRACK_AVISO_MINUTOS:
+        lineas.append(
+            f"⚠️ Logitrack con retraso: mediana {retraso:.0f} min; "
+            "la doble comprobación depende solo de lecturas vigentes"
+        )
+    if distancias:
+        lineas.append(
+            f"📏 Distancia entre equipos (detenidas): promedio "
+            f"{sum(distancias) / len(distancias):.0f} m, mediana "
+            f"{distancias[len(distancias) // 2]:.0f} m"
+        )
+    lineas.append(f"📍 Ubicación no coincide: {lejanas}")
+    sin_match = [str(row.get("Unidad")) for row in results if row.get("Logitrack Encontrado") == "NO"]
+    if sin_match:
+        lineas.append(f"❓ Sin coincidencia: {', '.join(sin_match[:20])}")
+    return lineas
 
 
 def cargar_configuracion(ruta: Path) -> dict[str, Any]:
@@ -581,34 +1203,69 @@ def filtrar_contenido(results: list[dict[str, Any]], contenido: dict[str, Any]):
     return filtrados
 
 
+def estatus_chat(estatus: Any) -> str:
+    """Estatus simplificado para Chat; el detalle de la fuente queda en Excel y consola."""
+    texto = str(estatus or "").strip()
+    return "DETENIDO" if texto.startswith("DETENIDO") else texto
+
+
 def construir_reporte_google(results: list[dict[str, Any]], now_mx: datetime, titulo: str):
     conteos: dict[str, int] = {}
     for row in results:
-        estado = str(row.get("Estatus") or "SIN ESTATUS")
+        estado = estatus_chat(row.get("Estatus")) or "SIN ESTATUS"
         conteos[estado] = conteos.get(estado, 0) + 1
     lineas = [
         f"🚛 *{titulo}*", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"📅 *Fecha:* {now_mx:%Y-%m-%d}", f"🕒 *Hora:* {now_mx:%H:%M:%S}",
         f"📦 *Total unidades:* {len(results)}", "", "📊 *Resumen*",
     ]
-    iconos = {"RUTA": "✅", "DETENIDO": "⛔", "TRAFICO LENTO": "🚦", "RETEN": "🚧"}
+    iconos = {
+        "DETENIDO": "⛔",
+        "REVISAR": "🔎",
+        "TRAFICO LENTO": "🚦",
+        "RETEN": "🚧",
+        "RUTA": "✅",
+    }
     for estado in iconos:
         lineas.append(f"{iconos[estado]} {estado.title()}: {conteos.get(estado, 0)}")
     lineas.extend(["", "*Detalle:*", "```"])
     if not results:
         lineas.append("No se encontraron unidades para reportar.")
     else:
-        lineas.append(f"{'UNIDAD':<12} | {'ESTATUS':<14} | {'TIEMPO':<12} | {'COORDENADAS':<23} | UBICACION")
-        lineas.append("-" * 125)
-        orden = {"DETENIDO": 0, "TRAFICO LENTO": 1, "RETEN": 2, "RUTA": 3}
+        lineas.append(f"{'UNIDAD':<12} | {'ESTATUS':<13} | {'TIEMPO':<12} | {'COORDENADAS':<23} | UBICACION")
+        lineas.append("-" * 124)
+        # Dentro de DETENIDO se conserva primero lo confirmado por ambas telemetrias.
+        orden = {
+            "DETENIDO CONFIRMADO": 0,
+            "DETENIDO SAMSARA": 1,
+            "DETENIDO LOGITRACK": 2,
+            "DETENIDO": 3,
+            "REVISAR": 4,
+            "TRAFICO LENTO": 5,
+            "RETEN": 6,
+            "RUTA": 7,
+        }
         for row in sorted(results, key=lambda x: (orden.get(x.get("Estatus"), 99), str(x.get("Unidad")))):
-            estado = str(row.get("Estatus") or "")
-            tiempo = row.get("Tiempo Detenido") if estado == "DETENIDO" else row.get("Tiempo Trafico")
+            estado = estatus_chat(row.get("Estatus"))
+            tiempo = (
+                row.get("Tiempo Detenido")
+                if estado == "DETENIDO"
+                else row.get("Tiempo Trafico")
+            )
             ubicacion = str(row.get("Ubicación") or "").replace("\n", " ")[:62]
             coordenadas = str(row.get("Coordenadas") or "")[:23]
-            lineas.append(f"{str(row.get('Unidad') or '')[:12]:<12} | {estado[:14]:<14} | {str(tiempo or '')[:12]:<12} | {coordenadas:<23} | {ubicacion}")
+            lineas.append(f"{str(row.get('Unidad') or '')[:12]:<12} | {estado[:13]:<13} | {str(tiempo or '')[:12]:<12} | {coordenadas:<23} | {ubicacion}")
     lineas.extend(["```", "", "✅ *Reporte generado automáticamente*"])
     return "\n".join(lineas)
+
+
+def imprimir_seguro(texto: str) -> None:
+    """Imprime una vista previa aun si la consola de Windows no admite emojis."""
+    try:
+        print(texto)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "ascii"
+        print(texto.encode(encoding, errors="replace").decode(encoding))
 
 
 def dividir_mensaje(texto: str, max_chars: int = MAX_GOOGLE_CHAT_CHARS) -> list[str]:
@@ -754,24 +1411,33 @@ def seleccionar_entregas(reporte: dict[str, Any], canal_forzado: str | None = No
     return [entrega for entrega in entregas if entrega.get("activo", True)]
 
 
-def entregar_reporte(reporte, results, excluidas, now_mx, dry_run, canal_forzado=None):
+def entregar_reporte(
+    reporte, results, excluidas, now_mx, dry_run, canal_forzado=None, chat_prueba=False
+):
     contenido = reporte.get("contenido") or {}
-    entregas = seleccionar_entregas(reporte, canal_forzado)
+    entregas = seleccionar_entregas(reporte, "google_chat" if chat_prueba else canal_forzado)
     if not entregas:
         print(f"[{reporte['nombre']}] Sin entregas activas; no se envio nada."); return
     excel_cache = None
     for entrega in entregas:
         canal = entrega["canal"].lower()
         if canal == "google_chat":
-            mensaje = construir_reporte_google(results, now_mx, reporte["nombre"])
+            titulo = f"🧪 PRUEBA - {reporte['nombre']}" if chat_prueba else reporte["nombre"]
+            mensaje = construir_reporte_google(results, now_mx, titulo)
             if dry_run:
-                print(f"\n[DRY-RUN][Google Chat][{reporte['nombre']}]\n{mensaje}"); continue
-            env_name = entrega.get("webhook_env", "GOOGLE_CHAT_WEBHOOK_URL")
+                imprimir_seguro(
+                    f"\n[DRY-RUN][Google Chat][{reporte['nombre']}]\n{mensaje}"
+                )
+                continue
+            env_name = (
+                WEBHOOK_PRUEBAS_ENV if chat_prueba
+                else entrega.get("webhook_env", "GOOGLE_CHAT_WEBHOOK_URL")
+            )
             webhook = os.getenv(env_name, "")
             if not webhook:
                 raise ConfiguracionError(f"Falta la variable {env_name}")
             enviar_google_chat(mensaje, webhook)
-            print(f"[{reporte['nombre']}] Enviado a Google Chat.")
+            print(f"[{reporte['nombre']}] Enviado a Google Chat ({env_name}).")
         elif canal == "correo":
             if excel_cache is None:
                 excel_cache = crear_excel_reporte(reporte["nombre"], results, excluidas, now_mx, contenido)
@@ -815,6 +1481,8 @@ def seleccionar_reportes(config, nombres):
 def ejecutar(args: argparse.Namespace) -> int:
     if not 1 <= args.tag_page_size <= 512:
         raise ConfiguracionError("--tag-page-size debe estar entre 1 y 512")
+    if getattr(args, "chat_prueba", False) and args.canal == "correo":
+        raise ConfiguracionError("--chat-prueba solo envia por Google Chat; no use --canal correo")
     config = cargar_configuracion(args.config)
     reportes = seleccionar_reportes(config, args.solo)
     token = os.getenv("SAMSARA_API_TOKEN") or os.getenv("SAMSARA_TOKEN", "").removeprefix("Bearer ")
@@ -839,6 +1507,7 @@ def ejecutar(args: argparse.Namespace) -> int:
     tz = pytz.timezone(config.get("zona_horaria", DEFAULT_TIMEZONE)); now_mx = datetime.now(tz)
     filtros_base = config.get("filtros_base") or {}
     cache_geocercas: dict[tuple[str, ...], dict[str, str]] = {}
+    direcciones_samsara: list[dict[str, Any]] | None = None
     cache_etiquetas = cargar_cache_catalogo(catalogo_path)
     errores = []
     for reporte in reportes:
@@ -867,6 +1536,59 @@ def ejecutar(args: argparse.Namespace) -> int:
             results, excluidas = procesar_vehiculos(
                 vehicles, now_mx, filtros, cache_geocercas[ids_geocercas]
             )
+            logitrack_settings = reporte.get("telemetria_logitrack") or {}
+            usar_logitrack = logitrack_settings.get("activo", False)
+            distancia_cercania = filtros.get("distancia_cercania_geocerca_metros")
+            # None = no se pudo descargar la geometria; las reglas que la usan no se aplican.
+            geometrias: dict[str, dict[str, Any]] | None = {}
+            especiales_ids = tuple(str(x) for x in filtros.get("geocercas_especiales_ids") or [])
+            if (ids_geocercas or especiales_ids) and not filtros.get("incluir_todas_las_unidades"):
+                try:
+                    if direcciones_samsara is None:
+                        direcciones_samsara = obtener_paginas(sesion, "/addresses", {"limit": 512})
+                    geometrias = obtener_geometrias_geocercas(
+                        sesion, ids_geocercas, especiales_ids, direcciones_samsara
+                    )
+                except Exception:
+                    logging.exception("No se pudieron descargar las geometrias de geocercas")
+                    print("[Geocercas][ERROR] No se pudo descargar la geometria de las geocercas.")
+                    geometrias = None
+            if geometrias:
+                results, dentro = excluir_por_coordenadas_en_geocerca(results, geometrias)
+                excluidas.extend(dentro)
+            if usar_logitrack:
+                statuses_logitrack: list[dict[str, Any]] = []
+                try:
+                    api_url = os.getenv(
+                        "LOGITRACK_API_URL", LOGITRACK_DEFAULT_API_URL
+                    ).strip().rstrip("/")
+                    token_url = os.getenv(
+                        "LOGITRACK_TOKEN_URL", LOGITRACK_DEFAULT_TOKEN_URL
+                    ).strip()
+                    timeout_logitrack = int(os.getenv("LOGITRACK_TIMEOUT_SECONDS", "60"))
+                    with requests.Session() as sesion_logitrack:
+                        token_logitrack = request_access_token(
+                            sesion_logitrack, token_url, timeout_logitrack
+                        )
+                        statuses_logitrack = fetch_last_status(
+                            sesion_logitrack,
+                            api_url,
+                            token_logitrack,
+                            timeout_logitrack,
+                        )
+                except Exception:
+                    logging.exception("No se pudo consultar Logitrack")
+                    print(
+                        f"[Logitrack][ERROR] No se pudo consultar; "
+                        f"{reporte['nombre']} continuara solo con Samsara."
+                    )
+                results = enriquecer_con_logitrack(
+                    results, statuses_logitrack, now_mx, logitrack_settings
+                )
+                rescatadas, excluidas = rescatar_con_logitrack(
+                    excluidas, statuses_logitrack, now_mx, logitrack_settings, geometrias
+                )
+                results.extend(rescatadas)
             sheets_settings = config.get("google_sheets") or {}
             if sheets_settings.get("activo", True) and reporte.get("enriquecer_google_sheets", True):
                 try:
@@ -888,9 +1610,24 @@ def ejecutar(args: argparse.Namespace) -> int:
                     results = enriquecer_minutos_detenido(results, token, now_mx)
                 except Exception:
                     logging.exception("No se pudo enriquecer detenciones")
+            if usar_logitrack:
+                results = finalizar_comprobacion_telemetria(
+                    results, logitrack_settings
+                )
+            if usar_logitrack:
+                imprimir_seguro("\n".join(resumen_telemetria(results)).strip())
+            if distancia_cercania and geometrias:
+                results, cercanas = omitir_detenidas_cerca_de_geocerca(
+                    results, geometrias, float(distancia_cercania),
+                    filtros.get("estados_omitir_cerca_geocerca"),
+                )
+                excluidas.extend(cercanas)
             results = filtrar_contenido(results, reporte.get("contenido") or {})
             print(f"[{reporte['nombre']}] Recibidas={len(vehicles)} Incluidas={len(results)} Omitidas={len(excluidas)}")
-            entregar_reporte(reporte, results, excluidas, now_mx, args.dry_run, args.canal)
+            entregar_reporte(
+                reporte, results, excluidas, now_mx, args.dry_run, args.canal,
+                chat_prueba=args.chat_prueba,
+            )
         except Exception as error:
             logging.exception("Fallo el reporte %s", reporte["nombre"])
             errores.append(f"{reporte['nombre']}: {error}"); print(f"[ERROR] [{reporte['nombre']}] {error}")
@@ -907,6 +1644,11 @@ def crear_parser() -> argparse.ArgumentParser:
         "--canal",
         choices=("google_chat", "correo"),
         help="Fuerza un canal configurado, aunque su entrega este inactiva en el JSON.",
+    )
+    parser.add_argument(
+        "--chat-prueba",
+        action="store_true",
+        help=f"Envia solo por Google Chat al webhook de pruebas ({WEBHOOK_PRUEBAS_ENV}).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Previsualiza sin enviar.")
     parser.add_argument("--listar-etiquetas", action="store_true", help="Lista ID y nombre de etiquetas.")

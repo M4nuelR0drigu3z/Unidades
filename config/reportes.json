@@ -9,7 +9,7 @@
       "254792506", "254801835", "254802588", "254803338",
       "254859196", "94193861", "95243156", "95243200",
       "95243316", "95243513", "244349505", "245970120",
-      "254794170", "254794716", "257477773"
+      "254794170", "254794716", "257477773", "3000001263874"
     ],
     "excluir_unidades_en_geocerca": false,
     "etiquetas_geocercas_excluidas": [],
@@ -18,7 +18,9 @@
   "perfiles_filtros": {
     "EC-05": {
       "excluir_unidades_en_geocerca": true,
-      "etiquetas_geocercas_excluidas": ["EC-05"]
+      "excluir_speed_cero_sin_ecu": false,
+      "etiquetas_geocercas_excluidas": ["EC-05"],
+      "distancia_cercania_geocerca_metros": 400
     },
     "EC-02": {
       "incluir_todas_las_unidades": true,
@@ -81,13 +83,32 @@
       "tipo_filtro_etiqueta": "parentTagIds",
       "etiquetas": ["EC-05"],
       "analizar_detenciones": true,
+      "telemetria_logitrack": {
+        "activo": true,
+        "sufijos_unidad": ["TDR"],
+        "max_antiguedad_minutos": 15,
+        "distancia_detenido_metros": 150,
+        "factor_tolerancia_movimiento": 1.3,
+        "desfase_minimo_minutos": 1,
+        "velocidad_maxima_plausible_kmh": 120,
+        "velocidad_detenido_samsara_mph": 3,
+        "velocidad_detenido_logitrack_kmh": 5,
+        "detencion_minima_minutos": 5,
+        "usar_logitrack_si_samsara_viejo": true
+      },
       "contenido": {
         "estados": [],
         "unidades": [],
         "columnas": [
           "Unidad", "Estatus", "Tiempo Detenido", "Motor", "Fecha GPS",
           "Ubicación", "Latitud", "Longitud", "Coordenadas", "Geocerca",
-          "Velocidad Mph", "IsEcuSpeed", "PLACAS", "ID ROSTERING"
+          "Velocidad Mph", "IsEcuSpeed", "Estatus Samsara Actual",
+          "Fecha Logitrack", "Antiguedad Logitrack Min", "Ubicación Logitrack",
+          "Estatus Logitrack", "Velocidad Logitrack", "Motor Logitrack",
+          "Distancia GPS Metros", "Distancia Esperada Metros",
+          "Desfase Lecturas Min", "Ubicación Coincide",
+          "Logitrack Fresco", "Doble Comprobación Actual",
+          "Fuente Confirmación", "Motivo Decisión", "PLACAS", "ID ROSTERING"
         ],
         "incluir_omitidas_excel": true
       },
