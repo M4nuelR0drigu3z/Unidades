@@ -1320,6 +1320,17 @@ def aplicar_estilo_hoja(ws, fila_encabezado: int) -> None:
                     cell.fill = PatternFill("solid", fgColor="D9EAF7")
 
 
+def valor_listado(row: dict[str, Any], columna: str) -> Any:
+    """Valor para el listado simple: Estatus y Tiempo se muestran como en Chat."""
+    if columna == "Estatus":
+        return estatus_chat(row.get("Estatus"))
+    if columna == "Tiempo":
+        if estatus_chat(row.get("Estatus")) == "DETENIDO":
+            return row.get("Tiempo Detenido") or ""
+        return row.get("Tiempo Trafico") or ""
+    return row.get(columna)
+
+
 def crear_excel_reporte(
     nombre: str, results: list[dict[str, Any]], excluidas: list[dict[str, Any]],
     now_mx: datetime, contenido: dict[str, Any],
@@ -1327,6 +1338,14 @@ def crear_excel_reporte(
     wb = Workbook()
     ws = wb.active; ws.title = "Unidades"
     columnas = contenido.get("columnas") or DEFAULT_COLUMNS
+    if contenido.get("solo_listado_excel", False):
+        # Una sola hoja con encabezados en la fila 1, igual que el detalle de Chat.
+        ws.append(columnas)
+        for row in results:
+            ws.append([normalizar_valor_excel(valor_listado(row, columna)) for columna in columnas])
+        aplicar_estilo_hoja(ws, 1)
+        salida = BytesIO(); wb.save(salida)
+        return salida.getvalue()
     ws.append([nombre]); ws.append(["Generado", now_mx.replace(tzinfo=None)])
     if contenido.get("resumen_estados_excel", False):
         conteos = {

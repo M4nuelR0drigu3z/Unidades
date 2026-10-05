@@ -99,18 +99,14 @@
       "contenido": {
         "estados": [],
         "unidades": [],
-        "columnas": [
-          "Unidad", "Estatus", "Tiempo Detenido", "Motor", "Fecha GPS",
-          "Ubicación", "Latitud", "Longitud", "Coordenadas", "Geocerca",
-          "Velocidad Mph", "IsEcuSpeed", "Estatus Samsara Actual",
-          "Fecha Logitrack", "Antiguedad Logitrack Min", "Ubicación Logitrack",
-          "Estatus Logitrack", "Velocidad Logitrack", "Motor Logitrack",
-          "Distancia GPS Metros", "Distancia Esperada Metros",
-          "Desfase Lecturas Min", "Ubicación Coincide",
-          "Logitrack Fresco", "Doble Comprobación Actual",
-          "Fuente Confirmación", "Motivo Decisión", "PLACAS", "ID ROSTERING"
+        "columnas": ["Unidad", "Estatus", "Tiempo", "Coordenadas", "Ubicación"],
+        "orden_estados": [
+          "DETENIDO CONFIRMADO", "DETENIDO SAMSARA", "DETENIDO LOGITRACK", "DETENIDO",
+          "REVISAR", "TRAFICO LENTO", "RETEN", "RUTA"
         ],
-        "incluir_omitidas_excel": true
+        "solo_listado_excel": true,
+        "incluir_resumen_excel": false,
+        "incluir_omitidas_excel": false
       },
       "entregas": [
         {
@@ -122,7 +118,7 @@
           "canal": "correo",
           "activo": false,
           "destinatarios": [],
-          "destinatarios_env": "MAIL_TO",
+          "destinatarios_env": "MAIL_TO_EC05",
           "asunto": "{nombre} - {fecha} {hora}",
           "cuerpo": "Hola {equipo},\n\nSe adjunta el reporte {nombre}."
         }

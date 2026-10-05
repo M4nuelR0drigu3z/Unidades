@@ -615,6 +615,39 @@ class EnvioMainTests(unittest.TestCase):
         self.assertEqual(wb["Unidades"]["F3"].value, 1)
         wb.close()
 
+    def test_excel_solo_listado_con_encabezados_en_fila_1(self):
+        now = datetime(2026, 10, 5, 12, 0, tzinfo=pytz.UTC)
+        datos = [
+            {"Unidad": "100", "Estatus": "DETENIDO CONFIRMADO"},
+            {"Unidad": "200", "Estatus": "RUTA"},
+        ]
+        contenido = {"columnas": ["Unidad", "Estatus"], "solo_listado_excel": True}
+        archivo = envio.crear_excel_reporte("EC-05", datos, [{"Unidad": "9"}], now, contenido)
+        wb = load_workbook(BytesIO(archivo), read_only=True)
+        self.assertEqual(wb.sheetnames, ["Unidades"])
+        filas = list(wb["Unidades"].iter_rows(values_only=True))
+        self.assertEqual(filas, [("Unidad", "Estatus"), ("100", "DETENIDO"), ("200", "RUTA")])
+        wb.close()
+
+    def test_excel_listado_simple_igual_que_chat(self):
+        now = datetime(2026, 10, 5, 12, 0, tzinfo=pytz.UTC)
+        datos = [
+            {"Unidad": "1939", "Estatus": "DETENIDO CONFIRMADO", "Tiempo Detenido": "7h 28m",
+             "Coordenadas": "19.631638,-99.17491", "Ubicación": "Avenida Independencia"},
+            {"Unidad": "2002", "Estatus": "TRAFICO LENTO", "Tiempo Trafico": "12 min",
+             "Coordenadas": "19.3,-90.7", "Ubicación": "Champotón"},
+            {"Unidad": "2010", "Estatus": "RUTA", "Coordenadas": "20.1,-99.1", "Ubicación": "Arco Norte"},
+        ]
+        contenido = {"columnas": ["Unidad", "Estatus", "Tiempo", "Coordenadas", "Ubicación"],
+                     "solo_listado_excel": True}
+        archivo = envio.crear_excel_reporte("EC-05", datos, [], now, contenido)
+        wb = load_workbook(BytesIO(archivo), read_only=True)
+        filas = list(wb["Unidades"].iter_rows(values_only=True))
+        self.assertEqual(filas[1], ("1939", "DETENIDO", "7h 28m", "19.631638,-99.17491", "Avenida Independencia"))
+        self.assertEqual(filas[2][1:3], ("TRAFICO LENTO", "12 min"))
+        self.assertEqual(filas[3][1:3], ("RUTA", None))
+        wb.close()
+
     def test_contenido_ordena_detenidos_antes_de_ruta(self):
         datos = [
             {"Unidad": "2", "Estatus": "RUTA"},

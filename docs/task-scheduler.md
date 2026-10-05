@@ -21,7 +21,8 @@ Para generar el Excel y mandarlo por correo, duplique la tarea y configure:
 - Agregar argumentos: `"C:\Users\Administrator\source\repos\Unidades-1\EnvioMain.py" --solo "Reporte EC-05" --canal correo`
 - Iniciar en: `C:\Users\Administrator\source\repos\Unidades-1`
 
-Los destinatarios se obtienen de `MAIL_TO` en `.env`, separados por coma. También deben estar
+Los destinatarios de EC-05 se obtienen de `MAIL_TO_EC05` en `.env`, separados por coma (los demás
+reportes usan la variable indicada en su `destinatarios_env`). También deben estar
 configuradas `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` y `SMTP_PASSWORD`.
 
 ## Recomendaciones
