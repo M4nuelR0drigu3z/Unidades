@@ -66,7 +66,7 @@ En `.env`:
 ```
 TELEMETRIA_API_KEY=<cadena larga y aleatoria>
 TELEMETRIA_HOST=0.0.0.0
-TELEMETRIA_PUERTO=8000
+TELEMETRIA_PUERTO=8010
 TELEMETRIA_CENTROS=EC-05
 TELEMETRIA_REFRESCO_SEGUNDOS=180
 TELEMETRIA_CACHE_SEGUNDOS=300
@@ -84,10 +84,10 @@ Genere la clave con:
 .\.venv\Scripts\python.exe .\servidor_api.py
 ```
 
-Consulte `http://127.0.0.1:8000/docs` (botón **Authorize** con la clave) o:
+Consulte `http://127.0.0.1:8010/docs` (botón **Authorize** con la clave) o:
 
 ```powershell
-Invoke-RestMethod "http://127.0.0.1:8000/telemetria/consultarEstatus?centro_operativo=EC-05" `
+Invoke-RestMethod "http://127.0.0.1:8010/telemetria/consultarEstatus?centro_operativo=EC-05" `
   -Headers @{"X-API-Key"="<clave>"} | ConvertTo-Json -Depth 5
 ```
 
@@ -116,7 +116,7 @@ Invoke-RestMethod "http://127.0.0.1:8000/telemetria/consultarEstatus?centro_oper
 
    ```powershell
    New-NetFirewallRule -DisplayName "API Telemetria" -Direction Inbound -Protocol TCP `
-     -LocalPort 8000 -RemoteAddress 192.168.0.0/16 -Action Allow
+     -LocalPort 8010 -RemoteAddress 192.168.0.0/16 -Action Allow
    ```
 
 El log queda en `api_telemetria.log` (rota a 5 MB y conserva 5 archivos). Después de un
