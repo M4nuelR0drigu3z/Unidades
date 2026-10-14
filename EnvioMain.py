@@ -1497,6 +1497,129 @@ def seleccionar_reportes(config, nombres):
     return seleccionados
 
 
+def preparar_contexto_samsara(config: dict[str, Any]) -> dict[str, Any]:
+    """Sesion Samsara y caches compartidos entre reportes de una misma corrida."""
+    token = os.getenv("SAMSARA_API_TOKEN") or os.getenv("SAMSARA_TOKEN", "").removeprefix("Bearer ")
+    if not token:
+        raise ConfiguracionError("Falta SAMSARA_API_TOKEN o SAMSARA_TOKEN")
+    catalogo_path = Path(config.get("catalogo_etiquetas", DEFAULT_TAG_CATALOG_PATH))
+    if not catalogo_path.is_absolute():
+        catalogo_path = BASE_DIR / catalogo_path
+    return {
+        "config": config,
+        "token": token,
+        "sesion": crear_sesion_samsara(token),
+        "catalogo_path": catalogo_path,
+        "cache_etiquetas": cargar_cache_catalogo(catalogo_path),
+        "cache_geocercas": {},
+        "direcciones_samsara": None,
+    }
+
+
+def consultar_logitrack(nombre_reporte: str) -> list[dict[str, Any]]:
+    """Ultimo estatus Logitrack; vacio si no responde para continuar solo con Samsara."""
+    try:
+        api_url = os.getenv("LOGITRACK_API_URL", LOGITRACK_DEFAULT_API_URL).strip().rstrip("/")
+        token_url = os.getenv("LOGITRACK_TOKEN_URL", LOGITRACK_DEFAULT_TOKEN_URL).strip()
+        timeout_logitrack = int(os.getenv("LOGITRACK_TIMEOUT_SECONDS", "60"))
+        with requests.Session() as sesion_logitrack:
+            token_logitrack = request_access_token(sesion_logitrack, token_url, timeout_logitrack)
+            return fetch_last_status(sesion_logitrack, api_url, token_logitrack, timeout_logitrack)
+    except Exception:
+        logging.exception("No se pudo consultar Logitrack")
+        print(f"[Logitrack][ERROR] No se pudo consultar; {nombre_reporte} continuara solo con Samsara.")
+        return []
+
+
+def generar_resultados_reporte(
+    contexto: dict[str, Any],
+    reporte: dict[str, Any],
+    now_mx: datetime,
+    enriquecer_google_sheets: bool = True,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Aplica toda la logica del reporte y regresa (incluidas, omitidas, vehiculos recibidos)."""
+    config, sesion, token = contexto["config"], contexto["sesion"], contexto["token"]
+    cache_etiquetas, cache_geocercas = contexto["cache_etiquetas"], contexto["cache_geocercas"]
+    ids, resueltas = obtener_ids_etiquetas_reporte_remoto(sesion, reporte, cache_etiquetas)
+    print(f"\n[{reporte['nombre']}] Etiquetas: {resueltas or ids}")
+    vehicles = obtener_vehiculos(sesion, ids, reporte.get("tipo_filtro_etiqueta", "tagIds"))
+    filtros = combinar_filtros(
+        config.get("filtros_base") or {}, reporte, config.get("perfiles_filtros") or {}
+    )
+    ids_geocercas = []
+    if filtros.get("excluir_unidades_en_geocerca", False):
+        geocercas_por_nombre = resolver_etiquetas_samsara(
+            sesion, filtros.get("etiquetas_geocercas_excluidas") or [], cache_etiquetas
+        )
+        ids_geocercas.extend(geocercas_por_nombre.values())
+        ids_geocercas.extend(str(x) for x in filtros.get("etiqueta_ids_geocercas_excluidas") or [])
+    ids_geocercas = tuple(dict.fromkeys(ids_geocercas))
+    if ids_geocercas not in cache_geocercas:
+        cache_geocercas[ids_geocercas] = obtener_geocercas_de_etiquetas(sesion, ids_geocercas)
+    results, excluidas = procesar_vehiculos(vehicles, now_mx, filtros, cache_geocercas[ids_geocercas])
+    logitrack_settings = reporte.get("telemetria_logitrack") or {}
+    usar_logitrack = logitrack_settings.get("activo", False)
+    distancia_cercania = filtros.get("distancia_cercania_geocerca_metros")
+    # None = no se pudo descargar la geometria; las reglas que la usan no se aplican.
+    geometrias: dict[str, dict[str, Any]] | None = {}
+    especiales_ids = tuple(str(x) for x in filtros.get("geocercas_especiales_ids") or [])
+    if (ids_geocercas or especiales_ids) and not filtros.get("incluir_todas_las_unidades"):
+        try:
+            if contexto["direcciones_samsara"] is None:
+                contexto["direcciones_samsara"] = obtener_paginas(sesion, "/addresses", {"limit": 512})
+            geometrias = obtener_geometrias_geocercas(
+                sesion, ids_geocercas, especiales_ids, contexto["direcciones_samsara"]
+            )
+        except Exception:
+            logging.exception("No se pudieron descargar las geometrias de geocercas")
+            print("[Geocercas][ERROR] No se pudo descargar la geometria de las geocercas.")
+            geometrias = None
+    if geometrias:
+        results, dentro = excluir_por_coordenadas_en_geocerca(results, geometrias)
+        excluidas.extend(dentro)
+    if usar_logitrack:
+        statuses_logitrack = consultar_logitrack(reporte["nombre"])
+        results = enriquecer_con_logitrack(results, statuses_logitrack, now_mx, logitrack_settings)
+        rescatadas, excluidas = rescatar_con_logitrack(
+            excluidas, statuses_logitrack, now_mx, logitrack_settings, geometrias
+        )
+        results.extend(rescatadas)
+    sheets_settings = config.get("google_sheets") or {}
+    if (
+        enriquecer_google_sheets
+        and sheets_settings.get("activo", True)
+        and reporte.get("enriquecer_google_sheets", True)
+    ):
+        try:
+            results = obtener_datos_google_sheets(results, now_mx, sheets_settings)
+        except Exception:
+            logging.exception("No se pudo enriquecer desde Google Sheets")
+    if reporte.get("enriquecer_operadores_samsara", False):
+        try:
+            results = enriquecer_operadores_samsara(
+                sesion, results, now_mx, reporte.get("operadores_ventana_horas", 24)
+            )
+        except Exception:
+            logging.exception("No se pudo enriquecer operadores desde Samsara")
+    if reporte.get("analizar_detenciones", True):
+        try:
+            results = enriquecer_minutos_detenido(results, token, now_mx)
+        except Exception:
+            logging.exception("No se pudo enriquecer detenciones")
+    if usar_logitrack:
+        results = finalizar_comprobacion_telemetria(results, logitrack_settings)
+        imprimir_seguro("\n".join(resumen_telemetria(results)).strip())
+    if distancia_cercania and geometrias:
+        results, cercanas = omitir_detenidas_cerca_de_geocerca(
+            results, geometrias, float(distancia_cercania),
+            filtros.get("estados_omitir_cerca_geocerca"),
+        )
+        excluidas.extend(cercanas)
+    results = filtrar_contenido(results, reporte.get("contenido") or {})
+    print(f"[{reporte['nombre']}] Recibidas={len(vehicles)} Incluidas={len(results)} Omitidas={len(excluidas)}")
+    return results, excluidas, len(vehicles)
+
+
 def ejecutar(args: argparse.Namespace) -> int:
     if not 1 <= args.tag_page_size <= 512:
         raise ConfiguracionError("--tag-page-size debe estar entre 1 y 512")
@@ -1504,13 +1627,8 @@ def ejecutar(args: argparse.Namespace) -> int:
         raise ConfiguracionError("--chat-prueba solo envia por Google Chat; no use --canal correo")
     config = cargar_configuracion(args.config)
     reportes = seleccionar_reportes(config, args.solo)
-    token = os.getenv("SAMSARA_API_TOKEN") or os.getenv("SAMSARA_TOKEN", "").removeprefix("Bearer ")
-    if not token:
-        raise ConfiguracionError("Falta SAMSARA_API_TOKEN o SAMSARA_TOKEN")
-    sesion = crear_sesion_samsara(token)
-    catalogo_path = Path(config.get("catalogo_etiquetas", DEFAULT_TAG_CATALOG_PATH))
-    if not catalogo_path.is_absolute():
-        catalogo_path = BASE_DIR / catalogo_path
+    contexto = preparar_contexto_samsara(config)
+    sesion, catalogo_path = contexto["sesion"], contexto["catalogo_path"]
     if args.sincronizar_etiquetas:
         catalogo = guardar_catalogo_etiquetas(sesion, catalogo_path, args.tag_page_size)
         print(
@@ -1524,125 +1642,10 @@ def ejecutar(args: argparse.Namespace) -> int:
             print(f"{tag.get('id')}\t{tag.get('parentTagId')}\t{tag.get('nombre')}")
         return 0
     tz = pytz.timezone(config.get("zona_horaria", DEFAULT_TIMEZONE)); now_mx = datetime.now(tz)
-    filtros_base = config.get("filtros_base") or {}
-    cache_geocercas: dict[tuple[str, ...], dict[str, str]] = {}
-    direcciones_samsara: list[dict[str, Any]] | None = None
-    cache_etiquetas = cargar_cache_catalogo(catalogo_path)
     errores = []
     for reporte in reportes:
         try:
-            ids, resueltas = obtener_ids_etiquetas_reporte_remoto(
-                sesion, reporte, cache_etiquetas
-            )
-            print(f"\n[{reporte['nombre']}] Etiquetas: {resueltas or ids}")
-            vehicles = obtener_vehiculos(sesion, ids, reporte.get("tipo_filtro_etiqueta", "tagIds"))
-            filtros = combinar_filtros(
-                filtros_base, reporte, config.get("perfiles_filtros") or {}
-            )
-            excluir_geocercas = filtros.get("excluir_unidades_en_geocerca", False)
-            ids_geocercas = []
-            if excluir_geocercas:
-                geocercas_por_nombre = resolver_etiquetas_samsara(
-                    sesion, filtros.get("etiquetas_geocercas_excluidas") or [], cache_etiquetas
-                )
-                ids_geocercas.extend(geocercas_por_nombre.values())
-                ids_geocercas.extend(
-                    str(x) for x in filtros.get("etiqueta_ids_geocercas_excluidas") or []
-                )
-            ids_geocercas = tuple(dict.fromkeys(ids_geocercas))
-            if ids_geocercas not in cache_geocercas:
-                cache_geocercas[ids_geocercas] = obtener_geocercas_de_etiquetas(sesion, ids_geocercas)
-            results, excluidas = procesar_vehiculos(
-                vehicles, now_mx, filtros, cache_geocercas[ids_geocercas]
-            )
-            logitrack_settings = reporte.get("telemetria_logitrack") or {}
-            usar_logitrack = logitrack_settings.get("activo", False)
-            distancia_cercania = filtros.get("distancia_cercania_geocerca_metros")
-            # None = no se pudo descargar la geometria; las reglas que la usan no se aplican.
-            geometrias: dict[str, dict[str, Any]] | None = {}
-            especiales_ids = tuple(str(x) for x in filtros.get("geocercas_especiales_ids") or [])
-            if (ids_geocercas or especiales_ids) and not filtros.get("incluir_todas_las_unidades"):
-                try:
-                    if direcciones_samsara is None:
-                        direcciones_samsara = obtener_paginas(sesion, "/addresses", {"limit": 512})
-                    geometrias = obtener_geometrias_geocercas(
-                        sesion, ids_geocercas, especiales_ids, direcciones_samsara
-                    )
-                except Exception:
-                    logging.exception("No se pudieron descargar las geometrias de geocercas")
-                    print("[Geocercas][ERROR] No se pudo descargar la geometria de las geocercas.")
-                    geometrias = None
-            if geometrias:
-                results, dentro = excluir_por_coordenadas_en_geocerca(results, geometrias)
-                excluidas.extend(dentro)
-            if usar_logitrack:
-                statuses_logitrack: list[dict[str, Any]] = []
-                try:
-                    api_url = os.getenv(
-                        "LOGITRACK_API_URL", LOGITRACK_DEFAULT_API_URL
-                    ).strip().rstrip("/")
-                    token_url = os.getenv(
-                        "LOGITRACK_TOKEN_URL", LOGITRACK_DEFAULT_TOKEN_URL
-                    ).strip()
-                    timeout_logitrack = int(os.getenv("LOGITRACK_TIMEOUT_SECONDS", "60"))
-                    with requests.Session() as sesion_logitrack:
-                        token_logitrack = request_access_token(
-                            sesion_logitrack, token_url, timeout_logitrack
-                        )
-                        statuses_logitrack = fetch_last_status(
-                            sesion_logitrack,
-                            api_url,
-                            token_logitrack,
-                            timeout_logitrack,
-                        )
-                except Exception:
-                    logging.exception("No se pudo consultar Logitrack")
-                    print(
-                        f"[Logitrack][ERROR] No se pudo consultar; "
-                        f"{reporte['nombre']} continuara solo con Samsara."
-                    )
-                results = enriquecer_con_logitrack(
-                    results, statuses_logitrack, now_mx, logitrack_settings
-                )
-                rescatadas, excluidas = rescatar_con_logitrack(
-                    excluidas, statuses_logitrack, now_mx, logitrack_settings, geometrias
-                )
-                results.extend(rescatadas)
-            sheets_settings = config.get("google_sheets") or {}
-            if sheets_settings.get("activo", True) and reporte.get("enriquecer_google_sheets", True):
-                try:
-                    results = obtener_datos_google_sheets(results, now_mx, sheets_settings)
-                except Exception:
-                    logging.exception("No se pudo enriquecer desde Google Sheets")
-            if reporte.get("enriquecer_operadores_samsara", False):
-                try:
-                    results = enriquecer_operadores_samsara(
-                        sesion,
-                        results,
-                        now_mx,
-                        reporte.get("operadores_ventana_horas", 24),
-                    )
-                except Exception:
-                    logging.exception("No se pudo enriquecer operadores desde Samsara")
-            if reporte.get("analizar_detenciones", True):
-                try:
-                    results = enriquecer_minutos_detenido(results, token, now_mx)
-                except Exception:
-                    logging.exception("No se pudo enriquecer detenciones")
-            if usar_logitrack:
-                results = finalizar_comprobacion_telemetria(
-                    results, logitrack_settings
-                )
-            if usar_logitrack:
-                imprimir_seguro("\n".join(resumen_telemetria(results)).strip())
-            if distancia_cercania and geometrias:
-                results, cercanas = omitir_detenidas_cerca_de_geocerca(
-                    results, geometrias, float(distancia_cercania),
-                    filtros.get("estados_omitir_cerca_geocerca"),
-                )
-                excluidas.extend(cercanas)
-            results = filtrar_contenido(results, reporte.get("contenido") or {})
-            print(f"[{reporte['nombre']}] Recibidas={len(vehicles)} Incluidas={len(results)} Omitidas={len(excluidas)}")
+            results, excluidas, _ = generar_resultados_reporte(contexto, reporte, now_mx)
             entregar_reporte(
                 reporte, results, excluidas, now_mx, args.dry_run, args.canal,
                 chat_prueba=args.chat_prueba,
