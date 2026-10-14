@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 import pytz
 
 import EnvioMain as envio
@@ -33,18 +33,99 @@ CLAVES_RESUMEN = {
     "RUTA": "ruta",
 }
 
-app = FastAPI(title="Telemetría de unidades", version="1.0.0")
+MAX_INTENTOS_FALLIDOS_DEFAULT = 10
+VENTANA_FALLOS_SEGUNDOS_DEFAULT = 600
+BLOQUEO_SEGUNDOS_DEFAULT = 900
+
+# /docs y /openapi.json describen la API a cualquiera; en produccion quedan apagados.
+_DOCS = os.getenv("TELEMETRIA_DOCS", "false").strip().lower() in {"1", "true", "si", "sí"}
+app = FastAPI(
+    title="Telemetría de unidades",
+    version="1.0.0",
+    docs_url="/docs" if _DOCS else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if _DOCS else None,
+)
+_fallos: dict[str, list[float]] = {}
+_bloqueados: dict[str, float] = {}
+_candado_fallos = threading.Lock()
+
+
+@app.middleware("http")
+async def encabezados_seguridad(request: Request, call_next):
+    respuesta = await call_next(request)
+    # Ubicaciones de la flota: que ningun proxy ni navegador las guarde.
+    respuesta.headers["Cache-Control"] = "no-store"
+    respuesta.headers["X-Content-Type-Options"] = "nosniff"
+    return respuesta
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _candados: dict[str, threading.Lock] = {}
 _candado_global = threading.Lock()
 
 
-def validar_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    esperada = os.getenv("TELEMETRIA_API_KEY", "")
-    if not esperada:
-        raise HTTPException(503, "La API no tiene configurada TELEMETRIA_API_KEY")
-    if not x_api_key or not secrets.compare_digest(x_api_key, esperada):
+def claves_configuradas() -> dict[str, str]:
+    """Consumidor -> clave.
+
+    TELEMETRIA_API_KEYS="erp:clave1,portal:clave2" da una clave por consumidor para poder
+    revocarlas por separado; TELEMETRIA_API_KEY sigue aceptandose como consumidor "general".
+    """
+    claves: dict[str, str] = {}
+    for par in os.getenv("TELEMETRIA_API_KEYS", "").split(","):
+        nombre, separador, clave = par.strip().partition(":")
+        if separador and nombre.strip() and clave.strip():
+            claves[nombre.strip()] = clave.strip()
+    unica = os.getenv("TELEMETRIA_API_KEY", "").strip()
+    if unica:
+        claves.setdefault("general", unica)
+    return claves
+
+
+def _ip_cliente(request: Request) -> str:
+    # Detras de IIS, uvicorn ya resuelve la IP real desde X-Forwarded-For (servidor_api.py).
+    return request.client.host if request.client else "desconocida"
+
+
+def _registrar_fallo(ip: str, ahora: float) -> None:
+    maximo = int(os.getenv("TELEMETRIA_MAX_INTENTOS_FALLIDOS", MAX_INTENTOS_FALLIDOS_DEFAULT))
+    ventana = int(os.getenv("TELEMETRIA_VENTANA_FALLOS_SEGUNDOS", VENTANA_FALLOS_SEGUNDOS_DEFAULT))
+    bloqueo = int(os.getenv("TELEMETRIA_BLOQUEO_SEGUNDOS", BLOQUEO_SEGUNDOS_DEFAULT))
+    with _candado_fallos:
+        recientes = [t for t in _fallos.get(ip, []) if ahora - t < ventana] + [ahora]
+        _fallos[ip] = recientes
+        if len(recientes) >= maximo:
+            _bloqueados[ip] = ahora + bloqueo
+            _fallos.pop(ip, None)
+            logging.warning("IP %s bloqueada %s s por %s claves invalidas", ip, bloqueo, maximo)
+
+
+def validar_api_key(
+    request: Request, x_api_key: str | None = Header(default=None)
+) -> str:
+    """Regresa el nombre del consumidor; bloquea temporalmente IPs que prueban claves."""
+    ip, ahora = _ip_cliente(request), time.monotonic()
+    with _candado_fallos:
+        hasta = _bloqueados.get(ip)
+        if hasta and hasta <= ahora:
+            _bloqueados.pop(ip, None)
+            hasta = None
+    if hasta:
+        raise HTTPException(
+            429, "Demasiados intentos fallidos; intente más tarde",
+            headers={"Retry-After": str(int(hasta - ahora) + 1)},
+        )
+    claves = claves_configuradas()
+    if not claves:
+        raise HTTPException(503, "La API no tiene claves configuradas")
+    consumidor = None
+    # Se comparan todas las claves para que el tiempo de respuesta no revele cual coincide.
+    for nombre, clave in claves.items():
+        if secrets.compare_digest((x_api_key or "").encode(), clave.encode()):
+            consumidor = nombre
+    if consumidor is None:
+        logging.warning("Clave invalida desde %s", ip)
+        _registrar_fallo(ip, ahora)
         raise HTTPException(401, "API key inválida")
+    return consumidor
 
 
 def buscar_reporte(config: dict[str, Any], centro_operativo: str) -> dict[str, Any] | None:
@@ -201,17 +282,26 @@ def salud() -> dict[str, Any]:
     return {"estado": "ok", "segundos_desde_ultimo_calculo": edades}
 
 
-@app.get("/telemetria/consultarEstatus", dependencies=[Depends(validar_api_key)])
-@app.get("/telemetria/consultarEstatus/", dependencies=[Depends(validar_api_key)], include_in_schema=False)
+@app.get("/telemetria/consultarEstatus")
+@app.get("/telemetria/consultarEstatus/", include_in_schema=False)
 def consultar_estatus(
-    centro_operativo: str = Query("EC-05", description="Centro operativo, por ejemplo EC-05"),
+    request: Request,
+    centro_operativo: str = Query(
+        "EC-05", max_length=40, description="Centro operativo, por ejemplo EC-05"
+    ),
+    consumidor: str = Depends(validar_api_key),
 ) -> dict[str, Any]:
+    logging.info(
+        "Consulta de estatus %s por %s desde %s", centro_operativo, consumidor, _ip_cliente(request)
+    )
     try:
         return obtener_estatus_con_cache(centro_operativo)
     except HTTPException:
         raise
     except envio.ConfiguracionError as error:
-        raise HTTPException(500, str(error)) from error
+        # El detalle de configuracion queda en el log, no en la respuesta.
+        logging.error("Configuracion invalida para %s: %s", centro_operativo, error)
+        raise HTTPException(500, "Error de configuración del servidor") from error
     except Exception as error:
         logging.exception("Fallo la consulta de estatus de %s", centro_operativo)
         raise HTTPException(502, "No se pudo consultar la telemetría") from error

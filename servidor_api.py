@@ -58,17 +58,28 @@ def main() -> None:
 
     from api_telemetria import app
 
-    host = os.getenv("TELEMETRIA_HOST", "0.0.0.0")
+    # Por defecto solo escucha dentro del servidor: el acceso externo entra por IIS con HTTPS.
+    host = os.getenv("TELEMETRIA_HOST", "127.0.0.1")
     puerto = int(os.getenv("TELEMETRIA_PUERTO", "8000"))
     if puerto_ocupado(host, puerto):
         logging.error(
             "El puerto %s ya lo usa otra aplicacion; cambie TELEMETRIA_PUERTO en .env", puerto
         )
         sys.exit(1)
-    if not os.getenv("TELEMETRIA_API_KEY"):
-        logging.error("Falta TELEMETRIA_API_KEY en .env; la API respondera 503")
-    logging.info("API de telemetria en http://%s:%s/docs", host, puerto)
-    uvicorn.run(app, host=host, port=puerto, log_config=None)
+    if not (os.getenv("TELEMETRIA_API_KEYS") or os.getenv("TELEMETRIA_API_KEY")):
+        logging.error("Faltan TELEMETRIA_API_KEYS en .env; la API respondera 503")
+    logging.info("API de telemetria en http://%s:%s", host, puerto)
+    uvicorn.run(
+        app,
+        host=host,
+        port=puerto,
+        log_config=None,
+        server_header=False,
+        # Solo se confia en X-Forwarded-For cuando la peticion viene de IIS en el mismo equipo.
+        proxy_headers=True,
+        forwarded_allow_ips="127.0.0.1",
+        limit_concurrency=int(os.getenv("TELEMETRIA_MAX_CONEXIONES", "50")),
+    )
 
 
 if __name__ == "__main__":

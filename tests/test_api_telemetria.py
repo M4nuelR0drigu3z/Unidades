@@ -23,6 +23,8 @@ FILAS = [
 class ApiTelemetriaTests(unittest.TestCase):
     def setUp(self):
         api._cache.clear()
+        api._fallos.clear()
+        api._bloqueados.clear()
         self.env = mock.patch.dict(os.environ, {"TELEMETRIA_API_KEY": "clave-prueba"})
         self.env.start()
         self.cliente = TestClient(api.app)
@@ -128,6 +130,47 @@ class ApiTelemetriaTests(unittest.TestCase):
                 "/telemetria/consultarEstatus", headers={"X-API-Key": "clave-prueba"}
             )
         self.assertNotIn("viejo", respuesta.json())
+
+    def _consultar(self, clave):
+        with mock.patch.object(
+            api, "calcular_estatus",
+            return_value=api.construir_respuesta_estatus("EC-05", FILAS, AHORA),
+        ):
+            return self.cliente.get("/telemetria/consultarEstatus", headers={"X-API-Key": clave})
+
+    def test_una_clave_por_consumidor_y_registro_de_quien_consulta(self):
+        with mock.patch.dict(os.environ, {
+            "TELEMETRIA_API_KEY": "", "TELEMETRIA_API_KEYS": "erp:clave-erp, portal:clave-portal",
+        }):
+            self.assertEqual(api.claves_configuradas(), {"erp": "clave-erp", "portal": "clave-portal"})
+            with self.assertLogs(level="INFO") as registro:
+                self.assertEqual(self._consultar("clave-portal").status_code, 200)
+            self.assertTrue(any("por portal desde" in linea for linea in registro.output))
+            self.assertEqual(self._consultar("clave-prueba").status_code, 401)
+
+    def test_bloquea_ip_tras_intentos_fallidos(self):
+        with mock.patch.dict(os.environ, {"TELEMETRIA_MAX_INTENTOS_FALLIDOS": "3"}):
+            codigos = [self._consultar("mala").status_code for _ in range(3)]
+            self.assertEqual(codigos, [401, 401, 401])
+            bloqueada = self._consultar("clave-prueba")  # ni la clave correcta pasa
+            self.assertEqual(bloqueada.status_code, 429)
+            self.assertIn("Retry-After", bloqueada.headers)
+            api._bloqueados.clear()
+            self.assertEqual(self._consultar("clave-prueba").status_code, 200)
+
+    def test_encabezados_de_seguridad_y_docs_apagados(self):
+        respuesta = self._consultar("clave-prueba")
+        self.assertEqual(respuesta.headers["Cache-Control"], "no-store")
+        self.assertEqual(respuesta.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(self.cliente.get("/docs").status_code, 404)
+        self.assertEqual(self.cliente.get("/openapi.json").status_code, 404)
+
+    def test_centro_operativo_demasiado_largo_se_rechaza(self):
+        respuesta = self.cliente.get(
+            "/telemetria/consultarEstatus", params={"centro_operativo": "x" * 200},
+            headers={"X-API-Key": "clave-prueba"},
+        )
+        self.assertEqual(respuesta.status_code, 422)
 
     def test_centro_desconocido_regresa_404(self):
         with mock.patch.object(
