@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 import pytz
 
+import catalogo_unidades
 import EnvioMain as envio
 
 CACHE_SEGUNDOS_DEFAULT = 300
@@ -454,3 +455,27 @@ def consultar_estatus(
     except Exception as error:
         logging.exception("Fallo la consulta de estatus de %s", centro_operativo)
         raise HTTPException(502, "No se pudo consultar la telemetría") from error
+
+
+@app.get("/telemetria/consultarUnidades")
+@app.get("/telemetria/consultarUnidades/", include_in_schema=False)
+def consultar_unidades(
+    request: Request,
+    unidad: str | None = Query(None, max_length=200, description="Una o varias separadas por coma"),
+    division: str | None = Query(None, max_length=120, description="EC-05, o varias separadas por coma"),
+    flota: int | None = Query(None, ge=0, description="ID de flota"),
+    incluir_bajas: bool = Query(False, description="Incluye unidades dadas de baja (OUT)"),
+    consumidor: str = Depends(validar_api_key),
+) -> dict[str, Any]:
+    """Catalogo de unidades de TMWSuite: numero, division, flota y placas."""
+    logging.info(
+        "Consulta de unidades unidad=%s division=%s flota=%s por %s desde %s",
+        unidad, division, flota, consumidor, _ip_cliente(request),
+    )
+    try:
+        unidades = catalogo_unidades.unidades_con_cache()
+    except Exception as error:
+        logging.exception("Fallo la consulta del catalogo de unidades")
+        raise HTTPException(502, "No se pudo consultar el catálogo de unidades") from error
+    filtradas = catalogo_unidades.filtrar_unidades(unidades, unidad, division, flota, incluir_bajas)
+    return {"total_unidades": len(filtradas), "unidades": filtradas}

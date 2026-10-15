@@ -71,6 +71,39 @@ Respuesta de un centro:
 | 502 | Samsara no respondió (Logitrack caído no es error: se usa solo Samsara) |
 | 503 | El servidor no tiene claves configuradas |
 
+## Catálogo de unidades
+
+```
+GET /telemetria/consultarUnidades?division=EC-05
+X-API-Key: <TELEMETRIA_API_KEY>
+```
+
+Unidades de TMWSuite (`tractorprofile`) con su división, flota y placas. La flota se toma de
+`trc_fleet`, y su nombre, de `VW_Fleet_Division` (o de `labelfile` con `labeldefinition='Fleet'`).
+Todos los filtros son opcionales y se combinan:
+
+| Parámetro | Ejemplo | Filtra |
+|---|---|---|
+| `unidad` | `1939,1786` | Una o varias unidades |
+| `division` | `EC-05,EC-10` | Una o varias divisiones |
+| `flota` | `40` | ID de flota |
+| `incluir_bajas` | `true` | Incluye las unidades `OUT` (por defecto se omiten) |
+
+```json
+{
+  "total_unidades": 97,
+  "unidades": [
+    {"unidad": "1939", "division": "EC-05", "flota": {"id": 40, "nombre": "MeLi Dedicado SD05"},
+     "placas": "58BA9Y", "activa": true}
+  ]
+}
+```
+
+El catálogo completo se lee de SQL con una sola consulta fija y se guarda
+`TELEMETRIA_CACHE_UNIDADES_SEGUNDOS` (600); los filtros se aplican en memoria, así que ningún valor
+del cliente llega al SQL. Usa las variables `SQL_*` del `.env`. Se recomienda que `SQL_USER` sea un
+usuario de solo lectura. Si SQL no responde, el endpoint responde 502 sin detalles.
+
 `GET /salud` responde sin clave, con los segundos desde el último cálculo de cada centro. La
 documentación interactiva (`/docs`) está apagada salvo con `TELEMETRIA_DOCS=true`.
 

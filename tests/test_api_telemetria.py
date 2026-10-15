@@ -95,6 +95,43 @@ class ApiTelemetriaTests(unittest.TestCase):
         self.assertEqual(sorted(calculados), ["EC-04", "EC-05", "EC-10"])
         self.assertEqual(sorted(api._cache), ["ec-04", "ec-05", "ec-10"])
 
+    UNIDADES = [
+        {"unidad": "1939", "division": "EC-05", "flota": {"id": 40, "nombre": "MeLi Dedicado SD05"},
+         "placas": "58BA9Y", "activa": True},
+        {"unidad": "1786", "division": "EC-10", "flota": {"id": 70, "nombre": "Avl EC-10"},
+         "placas": "70AT5K", "activa": True},
+        {"unidad": "1500", "division": "AF", "flota": None, "placas": "", "activa": False},
+    ]
+
+    def _consultar_unidades(self, **params):
+        with mock.patch.object(api.catalogo_unidades, "unidades_con_cache", return_value=self.UNIDADES):
+            return self.cliente.get(
+                "/telemetria/consultarUnidades", params=params, headers={"X-API-Key": "clave-prueba"}
+            )
+
+    def test_catalogo_de_unidades_sin_bajas_por_defecto(self):
+        respuesta = self._consultar_unidades()
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual([u["unidad"] for u in respuesta.json()["unidades"]], ["1939", "1786"])
+        con_bajas = self._consultar_unidades(incluir_bajas="true").json()
+        self.assertEqual(con_bajas["total_unidades"], 3)
+
+    def test_catalogo_de_unidades_filtra_por_division_unidad_y_flota(self):
+        self.assertEqual(self._consultar_unidades(division="ec-10").json()["unidades"][0]["unidad"], "1786")
+        self.assertEqual(self._consultar_unidades(unidad="1939, 1786").json()["total_unidades"], 2)
+        self.assertEqual(self._consultar_unidades(flota=40).json()["unidades"][0]["placas"], "58BA9Y")
+
+    def test_catalogo_de_unidades_requiere_clave_y_oculta_errores_de_sql(self):
+        self.assertEqual(self.cliente.get("/telemetria/consultarUnidades").status_code, 401)
+        with mock.patch.object(
+            api.catalogo_unidades, "unidades_con_cache", side_effect=RuntimeError("Login failed for user x")
+        ):
+            respuesta = self.cliente.get(
+                "/telemetria/consultarUnidades", headers={"X-API-Key": "clave-prueba"}
+            )
+        self.assertEqual(respuesta.status_code, 502)
+        self.assertNotIn("Login", respuesta.text)
+
     def test_busca_reporte_por_perfil_o_nombre(self):
         config = {"reportes": [{"nombre": "Reporte EC-05", "perfil_filtros": "EC-05",
                                 "telemetria_logitrack": {"activo": True}}]}
@@ -164,7 +201,7 @@ class ApiTelemetriaTests(unittest.TestCase):
         self.assertEqual(respuesta.status_code, 401)
 
     def test_endpoint_sin_clave_configurada_no_responde_datos(self):
-        with mock.patch.dict(os.environ, {"TELEMETRIA_API_KEY": ""}):
+        with mock.patch.dict(os.environ, {"TELEMETRIA_API_KEY": "", "TELEMETRIA_API_KEYS": ""}):
             respuesta = self.cliente.get(
                 "/telemetria/consultarEstatus", headers={"X-API-Key": ""}
             )

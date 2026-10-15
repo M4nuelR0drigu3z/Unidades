@@ -23,7 +23,7 @@ jobs:
       - name: Compile core modules
         run: >-
           python -m py_compile
-          EnvioMain.py EnvioMainTest.py LogitrackEstatus.py api_telemetria.py servidor_api.py detenciones.py minutosdetenidosenvio.py
+          EnvioMain.py EnvioMainTest.py LogitrackEstatus.py api_telemetria.py catalogo_unidades.py servidor_api.py detenciones.py minutosdetenidosenvio.py
           scripts/diagnosticar_samsara_logitrack.py
           UltimaUbicacion.py tools/trackear_diferencias_samsara.py
 
