@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*,*::before,*::after{box-sizing:border-box}body{margin:0}</style>
+</head>
+<body>
+<title>API Estatus de Unidades TDR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: indice fijo a la izquierda en escritorio, documento de una columna (~68ch) a la derecha; en telefono el indice se vuelve una lista al inicio. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #18202b;
+  --muted: #5a6575;
+  --line: #dde2e9;
+  --accent: #b5620a;          /* ambar de senalizacion vial */
+  --accent-soft: #fdf1e3;
+  --code-bg: #10161f;
+  --code-ink: #e3e8ef;
+  --code-muted: #8a96a8;
+  --ok: #1f7a4d;   --ok-soft: #e4f4ec;
+  --warn: #9a6400; --warn-soft: #fbf0d9;
+  --bad: #b3261e;  --bad-soft: #fbe6e4;
+  --info: #285ea8; --info-soft: #e5eefa;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #151c25; --ink: #e6ebf1; --muted: #9aa6b6; --line: #263140;
+    --accent: #f0a14a; --accent-soft: #2b2013;
+    --code-bg: #0a0e14; --code-ink: #e3e8ef; --code-muted: #7f8ba0;
+    --ok: #5cc99a; --ok-soft: #12291f; --warn: #e8b552; --warn-soft: #2b2411;
+    --bad: #f08a80; --bad-soft: #301615; --info: #86b2ee; --info-soft: #132238;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #151c25; --ink: #e6ebf1; --muted: #9aa6b6; --line: #263140;
+  --accent: #f0a14a; --accent-soft: #2b2013;
+  --code-bg: #0a0e14; --code-ink: #e3e8ef; --code-muted: #7f8ba0;
+  --ok: #5cc99a; --ok-soft: #12291f; --warn: #e8b552; --warn-soft: #2b2411;
+  --bad: #f08a80; --bad-soft: #301615; --info: #86b2ee; --info-soft: #132238;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f-body); font-size: 16px; line-height: 1.6;
+  padding-inline: 16px; padding-block: 0 64px;
+}
+.page {
+  max-width: 1120px; margin: 0 auto;
+  display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px;
+}
+@media (max-width: 860px) { .page { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+
+/* Indice */
+.toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; padding-top: 40px; }
+.toc h2 { font-family: var(--f-display); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; border-left: 2px solid var(--line); }
+.toc a { display: block; padding: 4px 12px; margin-left: -2px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; font-size: 14px; }
+.toc a:hover, .toc a:focus-visible { color: var(--ink); border-left-color: var(--accent); outline: none; }
+@media (max-width: 860px) {
+  .toc { position: static; padding-top: 24px; }
+  .toc ol { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); border-left: 0; }
+  .toc a { border-left: 0; padding: 4px 0; }
+}
+
+main { min-width: 0; max-width: 72ch; }
+header.doc { padding-top: 40px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--f-mono); font-size: 13px; color: var(--accent); margin: 0 0 8px; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(30px, 5vw, 40px); line-height: 1.1; margin: 0 0 12px; text-wrap: balance; letter-spacing: -.01em; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 60ch; }
+.endpoint {
+  margin-top: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  font-family: var(--f-mono); font-size: 14px; min-width: 0;
+}
+.endpoint .verb { background: var(--ok-soft); color: var(--ok); font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.endpoint code { overflow-wrap: anywhere; }
+
+section { padding-top: 36px; scroll-margin-top: 16px; }
+h2 { font-family: var(--f-display); font-weight: 700; font-size: 24px; margin: 0 0 12px; text-wrap: balance; }
+h3 { font-family: var(--f-display); font-weight: 600; font-size: 18px; margin: 24px 0 8px; }
+p { margin: 0 0 12px; }
+ul, ol.steps { margin: 0 0 12px; padding-left: 22px; display: grid; gap: 6px; }
+a { color: var(--accent); }
+code { font-family: var(--f-mono); font-size: .9em; }
+p code, li code, td code { background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
+
+.placeholder { background: var(--warn-soft); color: var(--warn); padding: 1px 5px; border-radius: 3px; font-family: var(--f-mono); font-size: .9em; }
+
+.note { border-left: 3px solid var(--accent); background: var(--surface); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; }
+.btn { display: inline-block; font: 600 15px var(--f-body); color: var(--bg); background: var(--accent); text-decoration: none; padding: 9px 16px; border-radius: 6px; }
+.btn:hover { filter: brightness(1.08); }
+.btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.estado { margin-left: 10px; color: var(--muted); font-size: 14px; }
+.note strong { display: block; font-family: var(--f-display); margin-bottom: 4px; }
+
+/* Tablas */
+.table-wrap { overflow-x: auto; margin: 12px 0 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 10px 12px; vertical-align: top; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--f-display); font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--bg); }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--f-mono); white-space: nowrap; }
+
+.chip { display: inline-block; font-family: var(--f-mono); font-size: 12.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.chip.detenido { background: var(--bad-soft); color: var(--bad); }
+.chip.revisar { background: var(--warn-soft); color: var(--warn); }
+.chip.trafico { background: var(--info-soft); color: var(--info); }
+.chip.reten { background: var(--accent-soft); color: var(--accent); }
+.chip.ruta { background: var(--ok-soft); color: var(--ok); }
+
+/* Codigo */
+.code { margin: 12px 0 16px; border-radius: 6px; background: var(--code-bg); overflow: hidden; }
+.code-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid #ffffff14; }
+.code-bar span { font-family: var(--f-mono); font-size: 12px; color: var(--code-muted); }
+.copy { font: 500 12px var(--f-body); color: var(--code-ink); background: #ffffff14; border: 1px solid #ffffff22; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.copy:hover { background: #ffffff24; }
+.copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+pre { margin: 0; padding: 14px; overflow-x: auto; color: var(--code-ink); font-family: var(--f-mono); font-size: 13.5px; line-height: 1.55; }
+pre .c { color: var(--code-muted); }
+pre .k { color: #f0a14a; }
+pre .s { color: #8fd3a8; }
+
+/* Pestanas de lenguaje */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+.tab { font: 500 14px var(--f-body); padding: 6px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 6px 6px 0 0; cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--ink); border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tabs + .code { margin-top: 0; border-top-left-radius: 0; }
+
+.steps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 12px 0 16px; }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px; min-width: 0; }
+.step b { font-family: var(--f-mono); color: var(--accent); font-size: 13px; display: block; margin-bottom: 4px; }
+
+footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Contenido">
+    <h2>Contenido</h2>
+    <ol>
+      <li><a href="#acceso">Acceso y API key</a></li>
+      <li><a href="#consulta">Cómo consultar</a></li>
+      <li><a href="#postman">Probar con Postman</a></li>
+      <li><a href="#respuesta">Respuesta</a></li>
+      <li><a href="#estatus">Qué significa cada estatus</a></li>
+      <li><a href="#errores">Códigos de error</a></li>
+      <li><a href="#limites">Límites de uso</a></li>
+      <li><a href="#practicas">Buenas prácticas</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="doc">
+      <p class="eyebrow">TDR · Telemetría de flota · v1</p>
+      <h1>API Estatus de Unidades</h1>
+      <p class="lede">Consulta en tiempo casi real qué unidades de un centro operativo están detenidas o en ruta, con su ubicación y el tiempo que llevan detenidas.</p>
+      <div class="endpoint">
+        <span class="verb">GET</span>
+        <code>https://telemetria.tdr.com.mx/telemetria/consultarEstatus?centro_operativo=EC-05</code>
+      </div>
+    </header>
+
+    <section id="acceso">
+      <h2>Acceso y API key</h2>
+      <p>La API solo acepta conexiones por <strong>HTTPS</strong>. Cada sistema que la consume recibe su propia API key, que identifica a quien consulta.</p>
+      <div class="steps-grid">
+        <div class="step"><b>1 · Recibe el enlace</b>Te enviaremos la API key mediante un <strong>Send de Bitwarden</strong>.</div>
+        <div class="step"><b>2 · Ábrelo una vez</b>El enlace expira y puede tener un número limitado de accesos. Ábrelo en cuanto lo recibas.</div>
+        <div class="step"><b>3 · Guárdala</b>Copia la key a tu gestor de secretos o variable de entorno del servidor que hará las consultas.</div>
+      </div>
+      <div class="note">
+        <strong>La API key es personal de tu sistema</strong>
+        No la compartas, no la escribas en el código fuente ni en repositorios, y no la uses desde un navegador o una app móvil. Si el enlace expiró antes de abrirlo, o crees que la key se expuso, solicita una nueva: la anterior se revoca sin afectar a otros consumidores.
+      </div>
+      <p>Dirección del servicio: <code>https://telemetria.tdr.com.mx</code></p>
+    </section>
+
+    <section id="consulta">
+      <h2>Cómo consultar</h2>
+      <h3>Petición</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Elemento</th><th>Valor</th><th>Descripción</th></tr></thead>
+          <tbody>
+            <tr><td>Método</td><td><code>GET</code></td><td>Solo lectura. No se aceptan otros métodos.</td></tr>
+            <tr><td>Ruta</td><td><code>/telemetria/consultarEstatus</code></td><td>También responde con diagonal final.</td></tr>
+            <tr><td>Parámetro</td><td><code>centro_operativo</code></td><td>Uno o varios centros operativos, o <code>TODOS</code>. Ver la tabla siguiente. Si se omite, se usa <code>EC-05</code>.</td></tr>
+            <tr><td>Encabezado</td><td><code>X-API-Key</code></td><td>Tu API key. Obligatorio. Va en el encabezado, nunca en la URL.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Uno, varios o todos los centros</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Valor de centro_operativo</th><th>Consulta</th><th>Responde</th></tr></thead>
+          <tbody>
+            <tr><td><code>EC-05</code></td><td>Un centro</td><td>Un objeto</td></tr>
+            <tr><td><code>EC-05,EC-10</code></td><td>Varios centros, separados por coma (máximo 10)</td><td>Una lista, un objeto por centro</td></tr>
+            <tr><td><code>TODOS</code></td><td>Todos los centros operativos activos</td><td>Una lista, un objeto por centro</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Centros disponibles hoy: <code>EC-01</code>, <code>EC-02</code>, <code>EC-03</code>, <code>EC-04</code>, <code>EC-05</code>, <code>EC-06</code>, <code>EC-08</code> y <code>EC-10</code>. Si se da de alta un centro nuevo, queda disponible automáticamente; con <code>TODOS</code> lo recibirás sin cambiar tu integración.</p>
+
+      <h3>Ejemplos</h3>
+      <div class="tabs" role="tablist" aria-label="Lenguaje del ejemplo">
+        <button class="tab" role="tab" id="tab-curl" aria-controls="ej-curl" aria-selected="true">cURL</button>
+        <button class="tab" role="tab" id="tab-ps" aria-controls="ej-ps" aria-selected="false">PowerShell</button>
+        <button class="tab" role="tab" id="tab-py" aria-controls="ej-py" aria-selected="false">Python</button>
+        <button class="tab" role="tab" id="tab-cs" aria-controls="ej-cs" aria-selected="false">C#</button>
+        <button class="tab" role="tab" id="tab-js" aria-controls="ej-js" aria-selected="false">Node.js</button>
+      </div>
+      <div class="code" role="tabpanel" id="ej-curl" aria-labelledby="tab-curl">
+        <div class="code-bar"><span>bash</span><button class="copy" type="button">Copiar</button></div>
+<pre>curl -s "<span class="s">https://telemetria.tdr.com.mx/telemetria/consultarEstatus?centro_operativo=EC-05</span>" \
+  -H "<span class="s">X-API-Key: $TDR_TELEMETRIA_API_KEY</span>"</pre>
+      </div>
+      <div class="code" role="tabpanel" id="ej-ps" aria-labelledby="tab-ps" hidden>
+        <div class="code-bar"><span>PowerShell</span><button class="copy" type="button">Copiar</button></div>
+<pre><span class="k">$respuesta</span> = Invoke-RestMethod `
+  -Uri "<span class="s">https://telemetria.tdr.com.mx/telemetria/consultarEstatus?centro_operativo=EC-05</span>" `
+  -Headers @{ "<span class="s">X-API-Key</span>" = <span class="k">$env:TDR_TELEMETRIA_API_KEY</span> } `
+  -TimeoutSec 30
+<span class="k">$respuesta</span>.unidades | Where-Object estatus -eq "<span class="s">DETENIDO</span>"</pre>
+      </div>
+      <div class="code" role="tabpanel" id="ej-py" aria-labelledby="tab-py" hidden>
+        <div class="code-bar"><span>Python · requests</span><button class="copy" type="button">Copiar</button></div>
+<pre><span class="k">import</span> os
+<span class="k">import</span> requests
+
+respuesta = requests.get(
+    "<span class="s">https://telemetria.tdr.com.mx/telemetria/consultarEstatus</span>",
+    params={"<span class="s">centro_operativo</span>": "<span class="s">EC-05</span>"},
+    headers={"<span class="s">X-API-Key</span>": os.environ["<span class="s">TDR_TELEMETRIA_API_KEY</span>"]},
+    timeout=30,
+)
+respuesta.raise_for_status()
+datos = respuesta.json()
+detenidas = [u <span class="k">for</span> u <span class="k">in</span> datos["<span class="s">unidades</span>"] <span class="k">if</span> u["<span class="s">estatus</span>"] == "<span class="s">DETENIDO</span>"]</pre>
+      </div>
+      <div class="code" role="tabpanel" id="ej-cs" aria-labelledby="tab-cs" hidden>
+        <div class="code-bar"><span>C# · HttpClient</span><button class="copy" type="button">Copiar</button></div>
+<pre><span class="k">using var</span> cliente = <span class="k">new</span> HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+cliente.DefaultRequestHeaders.Add("<span class="s">X-API-Key</span>",
+    Environment.GetEnvironmentVariable("<span class="s">TDR_TELEMETRIA_API_KEY</span>"));
+
+<span class="k">var</span> respuesta = <span class="k">await</span> cliente.GetAsync(
+    "<span class="s">https://telemetria.tdr.com.mx/telemetria/consultarEstatus?centro_operativo=EC-05</span>");
+respuesta.EnsureSuccessStatusCode();
+<span class="k">string</span> json = <span class="k">await</span> respuesta.Content.ReadAsStringAsync();</pre>
+      </div>
+      <div class="code" role="tabpanel" id="ej-js" aria-labelledby="tab-js" hidden>
+        <div class="code-bar"><span>Node.js 18+ · solo del lado del servidor</span><button class="copy" type="button">Copiar</button></div>
+<pre><span class="k">const</span> url = <span class="k">new</span> URL("<span class="s">https://telemetria.tdr.com.mx/telemetria/consultarEstatus</span>");
+url.searchParams.set("<span class="s">centro_operativo</span>", "<span class="s">EC-05</span>");
+
+<span class="k">const</span> respuesta = <span class="k">await</span> fetch(url, {
+  headers: { "<span class="s">X-API-Key</span>": process.env.TDR_TELEMETRIA_API_KEY },
+  signal: AbortSignal.timeout(30000),
+});
+<span class="k">if</span> (!respuesta.ok) <span class="k">throw new</span> Error(`<span class="s">HTTP ${respuesta.status}</span>`);
+<span class="k">const</span> datos = <span class="k">await</span> respuesta.json();</pre>
+      </div>
+    </section>
+
+    <section id="postman">
+      <h2>Probar con Postman</h2>
+      <p>La colección trae tres consultas listas: un centro, varios centros y todos los centros. La API key ya está configurada como encabezado <code>X-API-Key</code> para toda la colección.</p>
+      <p id="bloque-descarga" hidden><button class="btn" type="button" id="descargar-postman">Descargar colección de Postman</button> <span id="estado-descarga" class="estado"></span></p>
+      <p id="bloque-enlace" hidden><a class="btn" href="api-estatus-unidades.postman_collection.json" download="api-estatus-unidades.postman_collection.json">Descargar colección de Postman</a></p>
+      <ol class="steps">
+        <li>En Postman, elige <strong>Import</strong> y arrastra el archivo descargado. Si la descarga no funciona, copia el JSON de abajo y pégalo en <strong>Import</strong>.</li>
+        <li>Abre la colección <strong>API Estatus de Unidades - TDR</strong>, pestaña <strong>Variables</strong>, y escribe tu API key en <code>apiKey</code>. Guarda con <strong>Ctrl+S</strong>.</li>
+        <li>Abre cualquiera de las consultas y presiona <strong>Send</strong>.</li>
+      </ol>
+      <div class="note">
+        <strong>No compartas la colección con la key escrita</strong>
+        Si exportas o compartes la colección, borra antes el valor de <code>apiKey</code>. En un workspace de equipo, guárdala como secreto o en un entorno privado.
+      </div>
+      <div class="code">
+        <div class="code-bar"><span>JSON · colección Postman v2.1</span><button class="copy" type="button">Copiar</button></div>
+<pre id="coleccion-postman">{
+  "info": {
+    "name": "API Estatus de Unidades - TDR",
+    "description": "Estatus DETENIDO / RUTA de las unidades por centro operativo. Escribe tu API key en la variable apiKey de la colección.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://telemetria.tdr.com.mx", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Un centro operativo",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/telemetria/consultarEstatus?centro_operativo=EC-05",
+          "host": ["{{baseUrl}}"],
+          "path": ["telemetria", "consultarEstatus"],
+          "query": [{ "key": "centro_operativo", "value": "EC-05" }]
+        }
+      }
+    },
+    {
+      "name": "Varios centros operativos",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/telemetria/consultarEstatus?centro_operativo=EC-05,EC-10",
+          "host": ["{{baseUrl}}"],
+          "path": ["telemetria", "consultarEstatus"],
+          "query": [{ "key": "centro_operativo", "value": "EC-05,EC-10" }]
+        }
+      }
+    },
+    {
+      "name": "Todos los centros",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/telemetria/consultarEstatus?centro_operativo=TODOS",
+          "host": ["{{baseUrl}}"],
+          "path": ["telemetria", "consultarEstatus"],
+          "query": [{ "key": "centro_operativo", "value": "TODOS" }]
+        }
+      }
+    }
+  ]
+}</pre>
+      </div>
+    </section>
+
+    <section id="respuesta">
+      <h2>Respuesta</h2>
+      <p>Una consulta correcta responde <code>200</code>. Con un solo centro, la respuesta es un objeto JSON como el del ejemplo. Con varios centros o <code>TODOS</code>, es una lista de esos objetos, uno por centro, cada uno con su propia <code>fecha</code> y <code>hora</code>. Las unidades vienen ordenadas con las detenidas primero.</p>
+      <div class="code">
+        <div class="code-bar"><span>JSON · ejemplo</span><button class="copy" type="button">Copiar</button></div>
+<pre>{
+  "centro_operativo": "EC-05",
+  "fecha": "2026-10-05",
+  "hora": "11:30:07",
+  "total_unidades": 35,
+  "resumen": {
+    "detenido": 14,
+    "ruta": 21
+  },
+  "unidades": [
+    {
+      "unidad": "1939",
+      "estatus": "DETENIDO",
+      "tiempo_minutos": 1435,
+      "coordenadas": { "latitud": 19.631638, "longitud": -99.17491 },
+      "ubicacion": "Avenida Independencia, Tultitlán, MEX, 54915",
+      "fecha_gps": "2026-10-05 11:29:41"
+    },
+    {
+      "unidad": "1944",
+      "estatus": "RUTA",
+      "tiempo_minutos": null,
+      "coordenadas": { "latitud": 19.939357, "longitud": -98.97107 },
+      "ubicacion": "Autopista Arco Norte, Tolcayuca, HID, 55680",
+      "fecha_gps": "2026-10-05 11:29:58"
+    }
+  ]
+}</pre>
+      </div>
+
+      <h3>Campos</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Campo</th><th>Tipo</th><th>Descripción</th></tr></thead>
+          <tbody>
+            <tr><td><code>centro_operativo</code></td><td>texto</td><td>Centro operativo consultado.</td></tr>
+            <tr><td><code>fecha</code>, <code>hora</code></td><td>texto</td><td>Momento en que se calculó el estatus, en hora del centro de México (<code>AAAA-MM-DD</code>, <code>HH:MM:SS</code>).</td></tr>
+            <tr><td><code>total_unidades</code></td><td>entero</td><td>Número de unidades en <code>unidades</code>.</td></tr>
+            <tr><td><code>resumen</code></td><td>objeto</td><td>Conteo de unidades por estatus: <code>detenido</code> y <code>ruta</code>.</td></tr>
+            <tr><td><code>unidades[].unidad</code></td><td>texto</td><td>Número económico de la unidad. Trátalo como texto aunque sea numérico.</td></tr>
+            <tr><td><code>unidades[].estatus</code></td><td>texto</td><td><code>DETENIDO</code> o <code>RUTA</code>. Ver <a href="#estatus">Qué significa cada estatus</a>.</td></tr>
+            <tr><td><code>unidades[].tiempo_minutos</code></td><td>entero o <code>null</code></td><td>Minutos que lleva detenida. <code>null</code> en unidades en ruta, o si la unidad se acaba de detener y aún no hay suficiente historial para calcularlo.</td></tr>
+            <tr><td><code>unidades[].coordenadas</code></td><td>objeto o <code>null</code></td><td><code>latitud</code> y <code>longitud</code> en grados decimales (WGS84). <code>null</code> si no hay posición.</td></tr>
+            <tr><td><code>unidades[].ubicacion</code></td><td>texto</td><td>Dirección aproximada de la última posición.</td></tr>
+            <tr><td><code>unidades[].fecha_gps</code></td><td>texto o <code>null</code></td><td>Hora en que el GPS reportó esa posición, en hora del centro de México (<code>AAAA-MM-DD HH:MM:SS</code>). Una unidad detenida con el motor apagado reporta con menos frecuencia, así que su <code>fecha_gps</code> puede ser anterior: la posición sigue siendo la última conocida.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="estatus">
+      <h2>Qué significa cada estatus</h2>
+      <p>Cada unidad se valida con la telemetría GPS y con su historial de movimiento de las últimas horas. En los centros que cuentan con una segunda plataforma de telemetría, ambas lecturas se cruzan y, cuando no coinciden, prevalece la más reciente.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Estatus</th><th>Significado</th><th>tiempo_minutos</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip detenido">DETENIDO</span></td><td>La unidad no se está moviendo. Incluye unidades que se acaban de detener.</td><td>Minutos detenida, o <code>null</code> si se acaba de detener</td></tr>
+            <tr><td><span class="chip ruta">RUTA</span></td><td>La unidad está en movimiento, aunque sea a baja velocidad por tráfico.</td><td><code>null</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Unidades que no aparecen</h3>
+      <p>La respuesta incluye solo unidades con viaje en curso. No aparecen:</p>
+      <ul>
+        <li>Unidades dentro de una base, patio o instalación de cliente, o detenidas a menos de 400 m de una de ellas.</li>
+        <li>Unidades cuya posición GPS no se ha actualizado en más de 60 minutos.</li>
+      </ul>
+      <p>Si una unidad que esperas no aparece, lo más probable es que esté en uno de estos casos.</p>
+    </section>
+
+    <section id="errores">
+      <h2>Códigos de error</h2>
+      <p>Los errores responden con un JSON de la forma <code>{"detail": "mensaje"}</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Código</th><th>Causa</th><th>Qué hacer</th></tr></thead>
+          <tbody>
+            <tr><td class="num">401</td><td>Falta el encabezado <code>X-API-Key</code> o la key no es válida.</td><td>Revisa que envíes la key completa en el encabezado. No reintentes en automático: cada intento fallido cuenta para el bloqueo.</td></tr>
+            <tr><td class="num">403</td><td>Tu IP superó el límite de peticiones por minuto o de conexiones simultáneas.</td><td>Espera un minuto y reduce la frecuencia.</td></tr>
+            <tr><td class="num">404</td><td>Algún centro operativo no existe. El mensaje dice cuál.</td><td>Revisa el valor de <code>centro_operativo</code>.</td></tr>
+            <tr><td class="num">422</td><td>Parámetro con formato inválido, o más de 10 centros en una consulta.</td><td>Corrige la petición, o usa <code>TODOS</code>.</td></tr>
+            <tr><td class="num">429</td><td>Tu IP quedó bloqueada temporalmente por varios intentos con una key inválida.</td><td>Espera el tiempo que indica el encabezado <code>Retry-After</code> (en segundos) y corrige la key.</td></tr>
+            <tr><td class="num">502</td><td>Las plataformas de telemetría no respondieron.</td><td>Reintenta en 1 a 3 minutos.</td></tr>
+            <tr><td class="num">503</td><td>El servicio no está disponible temporalmente.</td><td>Reintenta en unos minutos; si continúa, avísanos.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="limites">
+      <h2>Límites de uso</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Límite</th><th>Valor</th><th>Al excederlo</th></tr></thead>
+          <tbody>
+            <tr><td>Peticiones por IP</td><td class="num">60 por minuto</td><td>403 durante el resto del minuto</td></tr>
+            <tr><td>Conexiones simultáneas por IP</td><td class="num">10</td><td>403</td></tr>
+            <tr><td>Intentos con key inválida</td><td class="num">10 en 10 min</td><td>429: IP bloqueada 15 minutos</td></tr>
+            <tr><td>Tiempo de espera sugerido</td><td class="num">30 s</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="practicas">
+      <h2>Buenas prácticas</h2>
+      <ul>
+        <li><strong>Consulta desde tu servidor</strong>, nunca desde un navegador o app móvil: la key quedaría expuesta a cualquier usuario.</li>
+        <li><strong>Guarda la key fuera del código</strong>, en una variable de entorno o un gestor de secretos.</li>
+        <li><strong>Reintenta solo errores temporales</strong> (<code>502</code>, <code>503</code>), con una espera creciente entre intentos (por ejemplo 1, 2 y 4 minutos). No reintentes <code>401</code>, <code>404</code> ni <code>422</code>.</li>
+        <li><strong>Usa <code>fecha</code> y <code>hora</code></strong> para mostrar a tus usuarios qué tan reciente es la información.</li>
+        <li><strong>Identifica unidades por <code>unidad</code> como texto</strong>; no asumas que siempre será numérico.</li>
+        <li><strong>Tolera campos nuevos</strong>: en versiones futuras podríamos agregar campos a la respuesta sin cambiar los existentes.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>API Estatus de Unidades · TDR · Versión 1 · Octubre 2026. Para solicitar una API key nueva, reportar un problema o pedir otro centro operativo, contacta a Manuel Rodríguez, del equipo de TI.</p>
+    </footer>
+  </main>
+</div>
+
+<script>
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  function activar(tab) {
+    tabs.forEach(function (t) {
+      var activo = t === tab;
+      t.setAttribute('aria-selected', activo ? 'true' : 'false');
+      t.tabIndex = activo ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !activo;
+    });
+    try { localStorage.setItem('api-estatus-lenguaje', tab.id); } catch (e) {}
+  }
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener('click', function () { activar(tab); });
+    tab.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        var siguiente = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+        activar(siguiente); siguiente.focus();
+      }
+    });
+  });
+  try {
+    var guardado = document.getElementById(localStorage.getItem('api-estatus-lenguaje'));
+    if (guardado && guardado.classList.contains('tab')) activar(guardado);
+  } catch (e) {}
+
+  // Publicada en el servidor: enlace directo al archivo. En el visor de Claude: su capacidad de
+  // descargas, y si no esta disponible queda el JSON para copiar.
+  var estado = document.getElementById('estado-descarga');
+  if (!(window.claude && window.claude.use)) {
+    document.getElementById('bloque-enlace').hidden = false;
+  } else {
+    window.claude.use('downloads').then(function (downloads) {
+      if (!downloads) return;
+      document.getElementById('bloque-descarga').hidden = false;
+      document.getElementById('descargar-postman').addEventListener('click', function () {
+        estado.textContent = '';
+        downloads.save({
+          filename: 'api-estatus-unidades.postman_collection.json',
+          data: document.getElementById('coleccion-postman').textContent
+        }).then(function () {
+          estado.textContent = 'Descargada';
+        }, function (error) {
+          if (error && error.code === 'declined') return;
+          estado.textContent = error && error.code === 'rate_limited'
+            ? 'Espera un momento e inténtalo de nuevo.'
+            : 'No se pudo descargar; copia el JSON de abajo.';
+        });
+      });
+    });
+  }
+
+  document.querySelectorAll('.copy').forEach(function (boton) {
+    boton.addEventListener('click', function () {
+      var pre = boton.closest('.code').querySelector('pre');
+      var texto = pre.innerText;
+      function listo() { boton.textContent = 'Copiado'; setTimeout(function () { boton.textContent = 'Copiar'; }, 1600); }
+      function seleccionar() {
+        var rango = document.createRange(); rango.selectNodeContents(pre);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(rango);
+        boton.textContent = 'Selecciona y copia';
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto).then(listo, seleccionar);
+      } else { seleccionar(); }
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

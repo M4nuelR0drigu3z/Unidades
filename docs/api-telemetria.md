@@ -192,7 +192,10 @@ Invoke-RestMethod "http://127.0.0.1:8010/telemetria/consultarEstatus?centro_oper
      -Headers @{"X-API-Key"="<clave>"} | ConvertTo-Json -Depth 5
    ```
 
-5. Si existía la regla de firewall del puerto 8010, eliminarla:
+5. Documentación para clientes: copiar la carpeta `deploy\iis\documentacion` a la carpeta del
+   sitio (`C:\inetpub\api-telemetria\documentacion`). Queda en `https://<host>/documentacion/`, y
+   la raíz del sitio redirige ahí. Es pública y no contiene claves.
+6. Si existía la regla de firewall del puerto 8010, eliminarla:
 
    ```powershell
    Remove-NetFirewallRule -DisplayName "API Telemetria"

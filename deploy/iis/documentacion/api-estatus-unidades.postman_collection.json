@@ -1,0 +1,57 @@
+{
+  "info": {
+    "name": "API Estatus de Unidades - TDR",
+    "description": "Estatus DETENIDO / RUTA de las unidades por centro operativo. Escribe tu API key en la variable apiKey de la colección.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://telemetria.tdr.com.mx", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Un centro operativo",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/telemetria/consultarEstatus?centro_operativo=EC-05",
+          "host": ["{{baseUrl}}"],
+          "path": ["telemetria", "consultarEstatus"],
+          "query": [{ "key": "centro_operativo", "value": "EC-05" }]
+        }
+      }
+    },
+    {
+      "name": "Varios centros operativos",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/telemetria/consultarEstatus?centro_operativo=EC-05,EC-10",
+          "host": ["{{baseUrl}}"],
+          "path": ["telemetria", "consultarEstatus"],
+          "query": [{ "key": "centro_operativo", "value": "EC-05,EC-10" }]
+        }
+      }
+    },
+    {
+      "name": "Todos los centros",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/telemetria/consultarEstatus?centro_operativo=TODOS",
+          "host": ["{{baseUrl}}"],
+          "path": ["telemetria", "consultarEstatus"],
+          "query": [{ "key": "centro_operativo", "value": "TODOS" }]
+        }
+      }
+    }
+  ]
+}
