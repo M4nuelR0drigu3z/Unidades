@@ -1,7 +1,7 @@
 # API de estatus de unidades
 
-`api_telemetria.py` expone la misma lógica del Reporte EC-05 (Samsara + Logitrack, geocercas,
-historial de detención) como JSON. `servidor_api.py` la arranca en el servidor.
+`api_telemetria.py` expone como JSON el estatus de las unidades de cada centro operativo
+(etiquetas `EC-xx` de Samsara). `servidor_api.py` la arranca en el servidor.
 
 ## Endpoint
 
@@ -10,8 +10,26 @@ GET /telemetria/consultarEstatus?centro_operativo=EC-05
 X-API-Key: <TELEMETRIA_API_KEY>
 ```
 
-`centro_operativo` acepta el perfil (`EC-05`) o el nombre del reporte (`Reporte EC-05`) definidos
-en `config/reportes.json`. Respuesta:
+`centro_operativo` acepta:
+
+- Un centro: `EC-05`. Responde un objeto.
+- Varios separados por coma: `EC-05,EC-10` (máximo 10). Responde una lista, un objeto por centro.
+- `TODOS`: todos los centros `EC-xx` que existen en Samsara. Responde una lista.
+
+### Qué centros existen y con qué reglas
+
+La API descubre los centros desde las etiquetas de Samsara con nombre `EC-` y dos dígitos (se
+vuelven a leer cada 30 minutos), así que un centro nuevo en Samsara queda disponible sin cambiar
+código. Cualquier otro nombre responde 404 sin consultar Samsara.
+
+| Centro | Reglas |
+|---|---|
+| Con reporte propio que cruza Logitrack en `config/reportes.json` (hoy EC-05) | Las de ese reporte: Samsara + Logitrack, sus geocercas y umbrales. |
+| Todos los demás | Generales: solo Samsara y su historial; excluye las geocercas con la etiqueta del centro (como EC-05), las geocercas especiales de `filtros_base` (bases TDR, CEDIS) y las detenidas a 400 m de ellas; velocidad de 3 mph o menos pasa a historial para confirmar la detención. |
+
+Los reportes que solo generan Excel (`Reporte Sayer`, `Reporte EC-02`) no se usan en la API.
+
+Respuesta de un centro:
 
 ```json
 {
@@ -19,23 +37,28 @@ en `config/reportes.json`. Respuesta:
   "fecha": "2026-10-05",
   "hora": "11:30:07",
   "total_unidades": 35,
-  "resumen": {"detenido": 14, "revisar": 0, "trafico_lento": 0, "reten": 0, "ruta": 21},
+  "resumen": {"detenido": 14, "ruta": 21},
   "unidades": [
     {
       "unidad": "1939",
       "estatus": "DETENIDO",
       "tiempo_minutos": 1435,
       "coordenadas": {"latitud": 19.631638, "longitud": -99.17491},
-      "ubicacion": "Avenida Independencia, Tultitlán, MEX, 54915"
+      "ubicacion": "Avenida Independencia, Tultitlán, MEX, 54915",
+      "fecha_gps": "2026-10-05 11:29:41"
     }
   ]
 }
 ```
 
 - `fecha` y `hora` son el momento del cálculo (hora de México).
-- `estatus` usa los mismos valores que Google Chat: `DETENIDO`, `REVISAR`, `TRAFICO LENTO`,
-  `RETEN`, `RUTA`. Las unidades vienen ordenadas con las detenidas primero.
-- `tiempo_minutos` es el tiempo detenido (o en tráfico lento); `null` para las demás.
+- `estatus` es solo `DETENIDO` o `RUTA`. Internamente, `REVISAR` y `RETEN` se entregan como
+  `DETENIDO` y `TRAFICO LENTO` como `RUTA`; el detalle sigue en el Excel y el chat del reporte.
+  Las unidades vienen ordenadas con las detenidas primero.
+- `tiempo_minutos` es el tiempo detenido; `null` en `RUTA` o si aún no se pudo calcular.
+- `fecha_gps` es la hora de la lectura de donde salen las coordenadas (Samsara, o Logitrack si
+  la unidad se rescató con Logitrack). Una unidad apagada deja de reportar, así que en las
+  detenidas puede tener varios minutos o más: la posición sigue siendo la última conocida.
 - Las unidades omitidas por patio, geocerca o GPS viejo no aparecen, igual que en el reporte.
 
 | Código | Significado |
@@ -43,7 +66,8 @@ en `config/reportes.json`. Respuesta:
 | 200 | Consulta correcta |
 | 401 | Falta `X-API-Key` o no coincide |
 | 429 | IP bloqueada temporalmente por claves inválidas |
-| 404 | Centro operativo no configurado |
+| 404 | Algún centro operativo no existe en Samsara |
+| 422 | Más de 10 centros en una consulta |
 | 502 | Samsara no respondió (Logitrack caído no es error: se usa solo Samsara) |
 | 503 | El servidor no tiene claves configuradas |
 
@@ -52,9 +76,17 @@ documentación interactiva (`/docs`) está apagada salvo con `TELEMETRIA_DOCS=tr
 
 ## Rendimiento
 
-Un cálculo completo tarda ~15–20 s (Samsara, Logitrack e historial GPS). Por eso la API recalcula
-en segundo plano cada `TELEMETRIA_REFRESCO_SEGUNDOS` (180) los centros de `TELEMETRIA_CENTROS`, y
-las consultas responden al instante con el último cálculo.
+Calcular un centro tarda ~5–20 s (Samsara, Logitrack e historial GPS). Por eso la API recalcula
+en segundo plano los centros de `TELEMETRIA_CENTROS` (`TODOS` por defecto), de
+`TELEMETRIA_HILOS_REFRESCO` (4) en paralelo: los 8 centros tardan ~35 s. Las consultas responden
+al instante con el último cálculo; una consulta de un centro que se está calculando en ese momento
+espera el resultado nuevo.
+
+Los ciclos están alineados al reloj: empiezan en múltiplos de `TELEMETRIA_REFRESCO_SEGUNDOS` (180),
+es decir 12:00:00, 12:03:00 … 12:30:00, así que siempre hay un corte a las :00 y a las :30. Para
+tener el corte de la hora o la media hora de todos los centros, consulte a partir de las :01 y :31.
+El intervalo debe dividir 30 minutos (60, 120, 180, 300, 600…); si no, el log lo advierte al
+arrancar. El primer cálculo se hace al arrancar el servidor, sin esperar la marca.
 
 Si el refresco falla (por ejemplo, Samsara no responde) y el último cálculo tiene más de
 `TELEMETRIA_CACHE_SEGUNDOS` (300), la siguiente consulta recalcula en ese momento; si tampoco puede,
@@ -68,7 +100,7 @@ En `.env`:
 TELEMETRIA_API_KEYS=erp:<clave1>,portal:<clave2>
 TELEMETRIA_HOST=127.0.0.1
 TELEMETRIA_PUERTO=8010
-TELEMETRIA_CENTROS=EC-05
+TELEMETRIA_CENTROS=TODOS
 TELEMETRIA_REFRESCO_SEGUNDOS=180
 TELEMETRIA_CACHE_SEGUNDOS=300
 ```
@@ -82,7 +114,7 @@ TELEMETRIA_CACHE_SEGUNDOS=300
 - Opcionales: `TELEMETRIA_DOCS=true` enciende `/docs` (apagado por defecto);
   `TELEMETRIA_MAX_INTENTOS_FALLIDOS` (10), `TELEMETRIA_VENTANA_FALLOS_SEGUNDOS` (600) y
   `TELEMETRIA_BLOQUEO_SEGUNDOS` (900) controlan el bloqueo por claves inválidas;
-  `TELEMETRIA_MAX_CONEXIONES` (50).
+  `TELEMETRIA_MAX_CONEXIONES` (50); `TELEMETRIA_HILOS_REFRESCO` (4) centros calculados a la vez.
 
 Genere cada clave con:
 

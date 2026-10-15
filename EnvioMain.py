@@ -1584,6 +1584,14 @@ def generar_resultados_reporte(
             excluidas, statuses_logitrack, now_mx, logitrack_settings, geometrias
         )
         results.extend(rescatadas)
+    umbral_detenido = reporte.get("velocidad_detenido_mph")
+    if not usar_logitrack and umbral_detenido is not None:
+        # Sin Logitrack, una velocidad baja aunque no sea ECU pasa como candidata a
+        # detenida; el historial de Samsara la confirma o la regresa a RUTA.
+        for row in results:
+            velocidad = convertir_float((row.get("GpsActual") or {}).get("speedMilesPerHour")) or 0.0
+            if velocidad <= float(umbral_detenido):
+                row["Estatus"] = "DETENIDO"
     sheets_settings = config.get("google_sheets") or {}
     if (
         enriquecer_google_sheets

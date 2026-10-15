@@ -9,10 +9,12 @@ Consultar:
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -25,13 +27,28 @@ import EnvioMain as envio
 
 CACHE_SEGUNDOS_DEFAULT = 300
 REFRESCO_SEGUNDOS_DEFAULT = 180
-CLAVES_RESUMEN = {
-    "DETENIDO": "detenido",
-    "REVISAR": "revisar",
-    "TRAFICO LENTO": "trafico_lento",
-    "RETEN": "reten",
-    "RUTA": "ruta",
-}
+HILOS_REFRESCO_DEFAULT = 4
+CLAVES_RESUMEN = {"DETENIDO": "detenido", "RUTA": "ruta"}
+# El cliente solo recibe DETENIDO o RUTA. REVISAR (detenida hace menos del minimo o con
+# ubicaciones que no coinciden) y RETEN cuentan como detenida; TRAFICO LENTO avanza, es RUTA.
+# El detalle sigue disponible en el Excel y el log del reporte.
+ESTATUS_DETENIDO_API = {"DETENIDO", "REVISAR", "RETEN"}
+
+
+def estatus_api(estatus: Any) -> str:
+    return "DETENIDO" if envio.estatus_chat(estatus) in ESTATUS_DETENIDO_API else "RUTA"
+
+
+ORDEN_ESTADOS = [
+    "DETENIDO CONFIRMADO", "DETENIDO SAMSARA", "DETENIDO LOGITRACK", "DETENIDO",
+    "REVISAR", "TRAFICO LENTO", "RETEN", "RUTA",
+]
+# Solo nombres de centro operativo; evita consultar en Samsara etiquetas arbitrarias.
+PATRON_CENTRO = re.compile(r"EC-\d{2}", re.IGNORECASE)
+MAX_CENTROS_POR_CONSULTA = 10
+CATALOGO_CENTROS_SEGUNDOS = 1800
+_catalogo_centros: dict[str, Any] = {"momento": None, "centros": []}
+_candado_catalogo = threading.Lock()
 
 MAX_INTENTOS_FALLIDOS_DEFAULT = 10
 VENTANA_FALLOS_SEGUNDOS_DEFAULT = 600
@@ -129,7 +146,11 @@ def validar_api_key(
 
 
 def buscar_reporte(config: dict[str, Any], centro_operativo: str) -> dict[str, Any] | None:
-    """Ubica el reporte por perfil (EC-05) o por nombre (Reporte EC-05)."""
+    """Reporte con configuracion propia para la API: el que cruza con Logitrack (hoy EC-05).
+
+    Los reportes pensados solo para Excel (Sayer, EC-02 con todas las unidades) no aplican:
+    esos centros usan las reglas generales de reporte_generico.
+    """
     buscado = envio.normalizar_texto(centro_operativo)
     for reporte in config["reportes"]:
         nombres = {
@@ -137,9 +158,77 @@ def buscar_reporte(config: dict[str, Any], centro_operativo: str) -> dict[str, A
             envio.normalizar_texto(reporte["nombre"]),
             envio.normalizar_texto(reporte["nombre"]).removeprefix("reporte "),
         }
-        if buscado in nombres:
+        if buscado in nombres and (reporte.get("telemetria_logitrack") or {}).get("activo"):
             return reporte
     return None
+
+
+def reporte_generico(centro: str) -> dict[str, Any]:
+    """Reglas para centros sin configuracion propia: solo Samsara y su historial.
+
+    Igual que EC-05, excluye las geocercas que en Samsara tienen la etiqueta del centro
+    (si no tiene ninguna, no excluye nada por ese lado), ademas de las geocercas especiales
+    de filtros_base (bases TDR, CEDIS); y omite las unidades detenidas a 400 m de ellas.
+    """
+    return {
+        "nombre": f"Reporte {centro}",
+        "etiquetas": [centro],
+        "tipo_filtro_etiqueta": "parentTagIds",
+        "analizar_detenciones": True,
+        "enriquecer_google_sheets": False,
+        "velocidad_detenido_mph": 3,
+        "filtros": {
+            "excluir_speed_cero_sin_ecu": False,
+            "excluir_unidades_en_geocerca": True,
+            "etiquetas_geocercas_excluidas": [centro],
+            "distancia_cercania_geocerca_metros": 400,
+        },
+        "contenido": {"orden_estados": ORDEN_ESTADOS},
+    }
+
+
+def centros_samsara(config: dict[str, Any]) -> list[str]:
+    """Centros EC-xx que existen como etiqueta en Samsara; se vuelve a consultar cada 30 min."""
+    with _candado_catalogo:
+        momento = _catalogo_centros["momento"]
+        if momento is not None and time.monotonic() - momento < CATALOGO_CENTROS_SEGUNDOS:
+            return _catalogo_centros["centros"]
+        sesion = envio.preparar_contexto_samsara(config)["sesion"]
+        etiquetas = envio.obtener_catalogo_etiquetas_samsara(sesion, 512)
+        centros = sorted({
+            str(etiqueta.get("nombre")).strip().upper() for etiqueta in etiquetas
+            if PATRON_CENTRO.fullmatch(str(etiqueta.get("nombre") or "").strip())
+        })
+        _catalogo_centros.update(momento=time.monotonic(), centros=centros)
+        return centros
+
+
+def resolver_reporte(
+    config: dict[str, Any], centro_operativo: str
+) -> tuple[dict[str, Any] | None, str]:
+    """(reporte, nombre del centro); reporte es None si el centro no existe."""
+    reporte = buscar_reporte(config, centro_operativo)
+    if reporte is not None:
+        return reporte, reporte.get("perfil_filtros") or centro_operativo.strip().upper()
+    nombre = centro_operativo.strip().upper()
+    if PATRON_CENTRO.fullmatch(nombre) and nombre in centros_samsara(config):
+        return reporte_generico(nombre), nombre
+    return None, nombre
+
+
+def separar_centros(texto: str, config: dict[str, Any]) -> list[str]:
+    """'EC-05, ec-10' -> ['EC-05', 'EC-10']; 'TODOS' -> todos los centros de Samsara."""
+    nombres = list(dict.fromkeys(x.strip().upper() for x in texto.split(",") if x.strip()))
+    if "TODOS" in nombres:
+        return centros_samsara(config)
+    if not nombres:
+        raise HTTPException(422, "Indique al menos un centro operativo")
+    if len(nombres) > MAX_CENTROS_POR_CONSULTA:
+        raise HTTPException(422, f"Máximo {MAX_CENTROS_POR_CONSULTA} centros por consulta")
+    desconocidos = [nombre for nombre in nombres if resolver_reporte(config, nombre)[0] is None]
+    if desconocidos:
+        raise HTTPException(404, f"Centro operativo no disponible: {', '.join(desconocidos)}")
+    return nombres
 
 
 def _a_float(valor: Any) -> float | None:
@@ -151,14 +240,22 @@ def _minutos(valor: Any) -> int | None:
     return round(numero) if numero is not None else None
 
 
-def unidad_a_json(row: dict[str, Any]) -> dict[str, Any]:
-    estatus = envio.estatus_chat(row.get("Estatus"))
-    if estatus == "DETENIDO":
-        tiempo = _minutos(row.get("Minutos Detenido"))
-    elif estatus == "TRAFICO LENTO":
-        tiempo = _minutos(row.get("Minutos Trafico"))
+def fecha_gps(row: dict[str, Any]) -> str | None:
+    """Hora de la lectura de donde salen las coordenadas (hora de Mexico).
+
+    Si Samsara no tenia GPS vigente y la unidad se rescato con Logitrack, las coordenadas
+    son de Logitrack y su fecha tambien.
+    """
+    if row.get("Estatus Samsara Actual") in envio.MOTIVOS_SAMSARA_SIN_GPS_VIGENTE:
+        fecha = row.get("Fecha Logitrack")
     else:
-        tiempo = None
+        fecha = row.get("Fecha GPS")
+    return fecha.strftime("%Y-%m-%d %H:%M:%S") if isinstance(fecha, datetime) else None
+
+
+def unidad_a_json(row: dict[str, Any]) -> dict[str, Any]:
+    estatus = estatus_api(row.get("Estatus"))
+    tiempo = _minutos(row.get("Minutos Detenido")) if estatus == "DETENIDO" else None
     latitud, longitud = _a_float(row.get("Latitud")), _a_float(row.get("Longitud"))
     return {
         "unidad": str(row.get("Unidad") or ""),
@@ -169,6 +266,7 @@ def unidad_a_json(row: dict[str, Any]) -> dict[str, Any]:
             if latitud is not None and longitud is not None else None
         ),
         "ubicacion": str(row.get("Ubicación") or ""),
+        "fecha_gps": fecha_gps(row),
     }
 
 
@@ -193,9 +291,9 @@ def construir_respuesta_estatus(
 
 def calcular_estatus(centro_operativo: str) -> dict[str, Any]:
     config = envio.cargar_configuracion(envio.DEFAULT_CONFIG_PATH)
-    reporte = buscar_reporte(config, centro_operativo)
+    reporte, nombre = resolver_reporte(config, centro_operativo)
     if reporte is None:
-        raise HTTPException(404, f"Centro operativo no configurado: {centro_operativo}")
+        raise HTTPException(404, f"Centro operativo no disponible: {nombre}")
     zona = pytz.timezone(config.get("zona_horaria", envio.DEFAULT_TIMEZONE))
     now_mx = datetime.now(zona)
     contexto = envio.preparar_contexto_samsara(config)
@@ -203,7 +301,6 @@ def calcular_estatus(centro_operativo: str) -> dict[str, Any]:
     results, _, _ = envio.generar_resultados_reporte(
         contexto, reporte, now_mx, enriquecer_google_sheets=False
     )
-    nombre = reporte.get("perfil_filtros") or centro_operativo.upper()
     return construir_respuesta_estatus(nombre, results, now_mx)
 
 
@@ -240,29 +337,75 @@ def obtener_estatus_con_cache(centro_operativo: str) -> dict[str, Any]:
         return respuesta
 
 
-def refrescar_periodicamente(centros: list[str], intervalo: int, detener: threading.Event) -> None:
+def expandir_centros(centros: list[str]) -> list[str]:
+    if any(centro.strip().upper() == "TODOS" for centro in centros):
+        return centros_samsara(envio.cargar_configuracion(envio.DEFAULT_CONFIG_PATH))
+    return centros
+
+
+def segundos_para_siguiente_marca(intervalo: int, ahora: float | None = None) -> float:
+    """Segundos hasta el siguiente multiplo de `intervalo` en el reloj.
+
+    Con 180 s las marcas son 12:00:00, 12:03:00 ... 12:30:00. Los husos de Mexico difieren
+    de UTC en horas enteras, asi que los multiplos sobre la hora epoch caen igual en hora local.
+    """
+    ahora = time.time() if ahora is None else ahora
+    return intervalo - (ahora % intervalo)
+
+
+def _recalcular_en_segundo_plano(centro: str) -> None:
+    try:
+        recalcular(centro)
+        logging.info("Estatus de %s recalculado", centro)
+    except Exception:
+        logging.exception("Fallo el refresco en segundo plano de %s", centro)
+
+
+def refrescar_centros(centros: list[str], hilos: int) -> None:
+    try:
+        lista = expandir_centros(centros)
+    except Exception:
+        logging.exception("No se pudo obtener la lista de centros de Samsara")
+        lista = [centro for centro in centros if centro.strip().upper() != "TODOS"]
+    if not lista:
+        return
+    # Varios centros a la vez: el ciclo termina pocos segundos despues de la marca y todos
+    # los centros quedan con la misma hora de corte.
+    with ThreadPoolExecutor(max_workers=max(1, min(hilos, len(lista)))) as ejecutor:
+        list(ejecutor.map(_recalcular_en_segundo_plano, lista))
+
+
+def refrescar_periodicamente(
+    centros: list[str], intervalo: int, detener: threading.Event,
+    hilos: int = HILOS_REFRESCO_DEFAULT,
+) -> None:
+    """Primer calculo al arrancar; despues, cada ciclo empieza en una marca del reloj.
+
+    Si un ciclo tarda mas que el intervalo, el siguiente espera a la marca que sigue.
+    """
     while not detener.is_set():
-        for centro in centros:
-            try:
-                recalcular(centro)
-                logging.info("Estatus de %s recalculado", centro)
-            except Exception:
-                logging.exception("Fallo el refresco en segundo plano de %s", centro)
-        detener.wait(intervalo)
+        refrescar_centros(centros, hilos)
+        detener.wait(segundos_para_siguiente_marca(intervalo))
 
 
 def centros_a_refrescar() -> list[str]:
-    return [x.strip() for x in os.getenv("TELEMETRIA_CENTROS", "EC-05").split(",") if x.strip()]
+    return [x.strip() for x in os.getenv("TELEMETRIA_CENTROS", "TODOS").split(",") if x.strip()]
 
 
 @asynccontextmanager
 async def ciclo_de_vida(_app: FastAPI):
     intervalo = int(os.getenv("TELEMETRIA_REFRESCO_SEGUNDOS", REFRESCO_SEGUNDOS_DEFAULT))
+    hilos = int(os.getenv("TELEMETRIA_HILOS_REFRESCO", HILOS_REFRESCO_DEFAULT))
     detener = threading.Event()
     if intervalo > 0:
+        if 1800 % intervalo:
+            logging.warning(
+                "TELEMETRIA_REFRESCO_SEGUNDOS=%s no divide 30 minutos: los calculos no "
+                "coincidiran con las :00 y :30", intervalo,
+            )
         threading.Thread(
             target=refrescar_periodicamente,
-            args=(centros_a_refrescar(), intervalo, detener),
+            args=(centros_a_refrescar(), intervalo, detener, hilos),
             name="refresco-telemetria",
             daemon=True,
         ).start()
@@ -287,15 +430,21 @@ def salud() -> dict[str, Any]:
 def consultar_estatus(
     request: Request,
     centro_operativo: str = Query(
-        "EC-05", max_length=40, description="Centro operativo, por ejemplo EC-05"
+        "EC-05", max_length=120,
+        description="Un centro (EC-05), varios separados por coma (EC-05,EC-10) o TODOS",
     ),
     consumidor: str = Depends(validar_api_key),
-) -> dict[str, Any]:
+) -> Any:
     logging.info(
         "Consulta de estatus %s por %s desde %s", centro_operativo, consumidor, _ip_cliente(request)
     )
     try:
-        return obtener_estatus_con_cache(centro_operativo)
+        config = envio.cargar_configuracion(envio.DEFAULT_CONFIG_PATH)
+        centros = separar_centros(centro_operativo, config)
+        respuestas = [obtener_estatus_con_cache(centro) for centro in centros]
+        # Un centro: el objeto tal cual (compatibilidad); varios o TODOS: una lista.
+        es_lista = len(centros) > 1 or centro_operativo.strip().upper() == "TODOS"
+        return respuestas if es_lista else respuestas[0]
     except HTTPException:
         raise
     except envio.ConfiguracionError as error:

@@ -37,24 +37,124 @@ class ApiTelemetriaTests(unittest.TestCase):
         self.assertEqual(respuesta["fecha"], "2026-10-05")
         self.assertEqual(respuesta["hora"], "11:30:07")
         self.assertEqual(respuesta["total_unidades"], 4)
-        self.assertEqual(
-            respuesta["resumen"],
-            {"detenido": 2, "revisar": 0, "trafico_lento": 1, "reten": 0, "ruta": 1},
-        )
+        self.assertEqual(respuesta["resumen"], {"detenido": 2, "ruta": 2})
         self.assertEqual(respuesta["unidades"][0], {
             "unidad": "1939", "estatus": "DETENIDO", "tiempo_minutos": 1435,
             "coordenadas": {"latitud": 19.631638, "longitud": -99.17491},
-            "ubicacion": "Avenida Independencia",
+            "ubicacion": "Avenida Independencia", "fecha_gps": None,
         })
-        self.assertEqual(respuesta["unidades"][2]["tiempo_minutos"], 12)
+        # TRAFICO LENTO avanza: el cliente lo recibe como RUTA, sin tiempo.
+        self.assertEqual(respuesta["unidades"][2]["estatus"], "RUTA")
+        self.assertIsNone(respuesta["unidades"][2]["tiempo_minutos"])
         self.assertIsNone(respuesta["unidades"][3]["tiempo_minutos"])
         self.assertIsNone(respuesta["unidades"][3]["coordenadas"])
 
+    def test_cliente_solo_recibe_detenido_o_ruta(self):
+        casos = {
+            "DETENIDO CONFIRMADO": "DETENIDO", "DETENIDO SAMSARA": "DETENIDO",
+            "DETENIDO LOGITRACK": "DETENIDO", "REVISAR": "DETENIDO", "RETEN": "DETENIDO",
+            "TRAFICO LENTO": "RUTA", "RUTA": "RUTA",
+        }
+        for interno, esperado in casos.items():
+            self.assertEqual(api.estatus_api(interno), esperado, interno)
+        revisar = api.unidad_a_json({"Unidad": "9", "Estatus": "REVISAR", "Minutos Detenido": 3})
+        self.assertEqual((revisar["estatus"], revisar["tiempo_minutos"]), ("DETENIDO", 3))
+
+    def test_fecha_gps_es_la_de_la_lectura_de_las_coordenadas(self):
+        samsara = AHORA.replace(minute=28, second=41)
+        logitrack = AHORA.replace(minute=29, second=5)
+        normal = api.unidad_a_json({
+            "Unidad": "1", "Estatus": "RUTA", "Estatus Samsara Actual": "RUTA",
+            "Fecha GPS": samsara, "Fecha Logitrack": logitrack,
+        })
+        self.assertEqual(normal["fecha_gps"], "2026-10-05 11:28:41")
+        # Rescatada: Samsara sin GPS vigente, coordenadas y fecha de Logitrack.
+        rescatada = api.unidad_a_json({
+            "Unidad": "2", "Estatus": "DETENIDO LOGITRACK", "Estatus Samsara Actual": "GPS VIEJO",
+            "Fecha GPS": AHORA.replace(hour=6), "Fecha Logitrack": logitrack,
+        })
+        self.assertEqual(rescatada["fecha_gps"], "2026-10-05 11:29:05")
+
+    def test_refresco_alineado_a_marcas_del_reloj(self):
+        # 2026-10-05 12:00:00 en Mexico (UTC-6) = 18:00:00 UTC.
+        mediodia = pytz.utc.localize(datetime(2026, 10, 5, 18, 0, 0)).timestamp()
+        self.assertEqual(api.segundos_para_siguiente_marca(180, mediodia - 100), 100)
+        self.assertEqual(api.segundos_para_siguiente_marca(180, mediodia + 1), 179)
+        self.assertEqual(api.segundos_para_siguiente_marca(180, mediodia + 1800 - 30), 30)
+
+    def test_refresco_calcula_todos_los_centros_en_paralelo(self):
+        calculados = []
+
+        def calcular(centro):
+            calculados.append(centro)
+            return api.construir_respuesta_estatus(centro, FILAS, AHORA)
+
+        with mock.patch.object(api, "calcular_estatus", side_effect=calcular), \
+                mock.patch.object(api, "centros_samsara", return_value=["EC-04", "EC-05", "EC-10"]):
+            api.refrescar_centros(["TODOS"], 4)
+        self.assertEqual(sorted(calculados), ["EC-04", "EC-05", "EC-10"])
+        self.assertEqual(sorted(api._cache), ["ec-04", "ec-05", "ec-10"])
+
     def test_busca_reporte_por_perfil_o_nombre(self):
-        config = {"reportes": [{"nombre": "Reporte EC-05", "perfil_filtros": "EC-05"}]}
+        config = {"reportes": [{"nombre": "Reporte EC-05", "perfil_filtros": "EC-05",
+                                "telemetria_logitrack": {"activo": True}}]}
         for centro in ["EC-05", "ec-05", "Reporte EC-05"]:
             self.assertIsNotNone(api.buscar_reporte(config, centro), centro)
         self.assertIsNone(api.buscar_reporte(config, "EC-99"))
+
+    def test_reportes_solo_excel_no_se_usan_en_la_api(self):
+        # Caso real: "Reporte Sayer" y "Reporte EC-02" comparten perfil EC-02 y no cruzan Logitrack.
+        config = {"reportes": [
+            {"nombre": "Reporte Sayer", "perfil_filtros": "EC-02"},
+            {"nombre": "Reporte EC-02", "perfil_filtros": "EC-02"},
+        ]}
+        self.assertIsNone(api.buscar_reporte(config, "EC-02"))
+        with mock.patch.object(api, "centros_samsara", return_value=["EC-02", "EC-10"]):
+            reporte, nombre = api.resolver_reporte(config, "ec-02")
+        self.assertEqual(nombre, "EC-02")
+        self.assertEqual(reporte["etiquetas"], ["EC-02"])
+        self.assertEqual(reporte["tipo_filtro_etiqueta"], "parentTagIds")
+        self.assertEqual(reporte["filtros"]["distancia_cercania_geocerca_metros"], 400)
+        self.assertEqual(reporte["filtros"]["etiquetas_geocercas_excluidas"], ["EC-02"])
+        self.assertNotIn("telemetria_logitrack", reporte)
+
+    def test_centro_que_no_es_ec_no_consulta_samsara(self):
+        with mock.patch.object(api, "centros_samsara") as samsara:
+            reporte, _ = api.resolver_reporte({"reportes": []}, "Sayer Full")
+        self.assertIsNone(reporte)
+        samsara.assert_not_called()
+
+    def _consultar_centros(self, texto):
+        def calcular(centro):
+            return api.construir_respuesta_estatus(centro, FILAS, AHORA)
+
+        with mock.patch.object(api, "calcular_estatus", side_effect=calcular), \
+                mock.patch.object(api, "centros_samsara", return_value=["EC-04", "EC-05", "EC-10"]):
+            return self.cliente.get(
+                "/telemetria/consultarEstatus", params={"centro_operativo": texto},
+                headers={"X-API-Key": "clave-prueba"},
+            )
+
+    def test_varios_centros_regresan_lista(self):
+        respuesta = self._consultar_centros("EC-05, ec-10,EC-05")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual([x["centro_operativo"] for x in respuesta.json()], ["EC-05", "EC-10"])
+
+    def test_todos_regresa_todos_los_centros_de_samsara(self):
+        respuesta = self._consultar_centros("todos")
+        self.assertEqual([x["centro_operativo"] for x in respuesta.json()], ["EC-04", "EC-05", "EC-10"])
+
+    def test_un_centro_sigue_regresando_objeto(self):
+        self.assertEqual(self._consultar_centros("EC-10").json()["centro_operativo"], "EC-10")
+
+    def test_centro_inexistente_en_lista_regresa_404(self):
+        respuesta = self._consultar_centros("EC-05,EC-99")
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertIn("EC-99", respuesta.json()["detail"])
+
+    def test_limite_de_centros_por_consulta(self):
+        respuesta = self._consultar_centros(",".join(f"EC-{n:02d}" for n in range(11)))
+        self.assertEqual(respuesta.status_code, 422)
 
     def test_endpoint_requiere_api_key(self):
         self.assertEqual(self.cliente.get("/telemetria/consultarEstatus").status_code, 401)
@@ -176,7 +276,7 @@ class ApiTelemetriaTests(unittest.TestCase):
         with mock.patch.object(
             api.envio, "cargar_configuracion",
             return_value={"reportes": [{"nombre": "Reporte EC-05", "perfil_filtros": "EC-05"}]},
-        ):
+        ), mock.patch.object(api, "centros_samsara", return_value=["EC-05", "EC-10"]):
             respuesta = self.cliente.get(
                 "/telemetria/consultarEstatus", params={"centro_operativo": "EC-99"},
                 headers={"X-API-Key": "clave-prueba"},
