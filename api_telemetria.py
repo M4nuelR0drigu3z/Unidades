@@ -464,7 +464,7 @@ def consultar_unidades(
     unidad: str | None = Query(None, max_length=200, description="Una o varias separadas por coma"),
     division: str | None = Query(None, max_length=120, description="EC-05, o varias separadas por coma"),
     flota: int | None = Query(None, ge=0, description="ID de flota"),
-    incluir_bajas: bool = Query(False, description="Incluye unidades dadas de baja (OUT)"),
+    incluir_bajas: bool = Query(False, description="Incluye unidades dadas de baja (flota 17 Out o division UNK)"),
     consumidor: str = Depends(validar_api_key),
 ) -> dict[str, Any]:
     """Catalogo de unidades de TMWSuite: numero, division, flota y placas."""

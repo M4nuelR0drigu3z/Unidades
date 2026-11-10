@@ -27,7 +27,12 @@ SELECT
     TRY_CONVERT(int, lf.abbr) AS flota_id,
     COALESCE(fd.Nombre_Flota, lf.name) AS flota,
     LTRIM(RTRIM(tp.trc_licnum)) AS placas,
-    LTRIM(RTRIM(tp.trc_status)) AS estatus_tmw
+    LTRIM(RTRIM(tp.trc_status)) AS estatus_tmw,
+    CASE
+        WHEN LTRIM(RTRIM(tp.trc_fleet)) = '17' THEN 0
+        WHEN COALESCE(LTRIM(RTRIM(tp.trc_division)), '') IN ('', 'UNK') THEN 0
+        ELSE 1
+    END AS activa
 FROM [TMWSuite].dbo.tractorprofile AS tp
 LEFT JOIN [TMWSuite].dbo.labelfile AS lf
     ON lf.labeldefinition = 'Fleet' AND lf.abbr = tp.trc_fleet
@@ -96,7 +101,7 @@ def leer_unidades() -> list[dict[str, Any]]:
                 if fila["flota_id"] is not None or fila["flota"] else None
             ),
             "placas": _texto(fila["placas"]),
-            "activa": _texto(fila["estatus_tmw"]).upper() != "OUT",
+            "activa": bool(fila["activa"]),
         }
         for fila in filas
     ]

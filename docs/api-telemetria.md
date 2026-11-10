@@ -87,7 +87,12 @@ Todos los filtros son opcionales y se combinan:
 | `unidad` | `1939,1786` | Una o varias unidades |
 | `division` | `EC-05,EC-10` | Una o varias divisiones |
 | `flota` | `40` | ID de flota |
-| `incluir_bajas` | `true` | Incluye las unidades `OUT` (por defecto se omiten) |
+| `incluir_bajas` | `true` | Incluye las unidades dadas de baja (por defecto se omiten) |
+
+`activa` no depende de `trc_status`. Una unidad es baja si su flota (`trc_fleet`) es la 17, que en
+`labelfile` (`labeldefinition='Fleet'`) es `Out`, o si su división es `UNK` o está vacía. Una unidad con
+`trc_status = 'OUT'` asignada a una flota/proyecto y con división sigue activa; una con
+`trc_status = 'AVL'` en la flota 17 no lo está.
 
 ```json
 {
