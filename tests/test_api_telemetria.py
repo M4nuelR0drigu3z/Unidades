@@ -41,7 +41,7 @@ class ApiTelemetriaTests(unittest.TestCase):
         self.assertEqual(respuesta["unidades"][0], {
             "unidad": "1939", "estatus": "DETENIDO", "tiempo_minutos": 1435,
             "coordenadas": {"latitud": 19.631638, "longitud": -99.17491},
-            "ubicacion": "Avenida Independencia", "fecha_gps": None,
+            "ubicacion": "Avenida Independencia", "fecha_gps": None, "operador": None,
         })
         # TRAFICO LENTO avanza: el cliente lo recibe como RUTA, sin tiempo.
         self.assertEqual(respuesta["unidades"][2]["estatus"], "RUTA")
@@ -74,6 +74,23 @@ class ApiTelemetriaTests(unittest.TestCase):
             "Fecha GPS": AHORA.replace(hour=6), "Fecha Logitrack": logitrack,
         })
         self.assertEqual(rescatada["fecha_gps"], "2026-10-05 11:29:05")
+
+    def test_operador_de_samsara_completado_con_tmw(self):
+        operadores = {"RODMA": {"nombre": "MANUEL RODRIGUEZ", "telefono": "8112345678"}}
+        con_tmw = api.unidad_a_json({"Unidad": "1", "Estatus": "RUTA", "Operador": "rodma "}, operadores)
+        self.assertEqual(con_tmw["operador"], {
+            "id": "RODMA", "nombre": "MANUEL RODRIGUEZ", "telefono": "8112345678",
+        })
+        # No esta en TMW: queda el usuario de Samsara, sin telefono.
+        sin_tmw = api.unidad_a_json({"Unidad": "2", "Estatus": "RUTA", "Operador": "JIMMY"}, operadores)
+        self.assertEqual(sin_tmw["operador"], {"id": "JIMMY", "nombre": "JIMMY", "telefono": None})
+        sin_asignacion = api.unidad_a_json({"Unidad": "3", "Estatus": "RUTA", "Operador": ""}, operadores)
+        self.assertIsNone(sin_asignacion["operador"])
+
+    def test_telefono_solo_digitos(self):
+        self.assertEqual(api.catalogo_unidades.limpiar_telefono(" 81 1234-5678 "), "8112345678")
+        self.assertIsNone(api.catalogo_unidades.limpiar_telefono(None))
+        self.assertIsNone(api.catalogo_unidades.limpiar_telefono("  "))
 
     def test_refresco_alineado_a_marcas_del_reloj(self):
         # 2026-10-05 12:00:00 en Mexico (UTC-6) = 18:00:00 UTC.
