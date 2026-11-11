@@ -254,7 +254,28 @@ def fecha_gps(row: dict[str, Any]) -> str | None:
     return fecha.strftime("%Y-%m-%d %H:%M:%S") if isinstance(fecha, datetime) else None
 
 
-def unidad_a_json(row: dict[str, Any]) -> dict[str, Any]:
+def operador_json(
+    row: dict[str, Any], operadores: dict[str, dict[str, Any]] | None
+) -> dict[str, Any] | None:
+    """Operador que Samsara asigno a la unidad en las ultimas 24 h, completado con TMW.
+
+    El usuario del conductor en Samsara es el mpp_id de manpowerprofile; de ahi salen el
+    nombre completo y el telefono (mpp_currentphone). Si no esta en TMW, queda el de Samsara.
+    """
+    operador_id = str(row.get("Operador") or "").strip().upper()
+    if not operador_id:
+        return None
+    tmw = (operadores or {}).get(operador_id) or {}
+    return {
+        "id_operador": operador_id,
+        "nombre": tmw.get("nombre") or operador_id,
+        "telefono": tmw.get("telefono"),
+    }
+
+
+def unidad_a_json(
+    row: dict[str, Any], operadores: dict[str, dict[str, Any]] | None = None
+) -> dict[str, Any]:
     estatus = estatus_api(row.get("Estatus"))
     tiempo = _minutos(row.get("Minutos Detenido")) if estatus == "DETENIDO" else None
     latitud, longitud = _a_float(row.get("Latitud")), _a_float(row.get("Longitud"))
@@ -268,13 +289,17 @@ def unidad_a_json(row: dict[str, Any]) -> dict[str, Any]:
         ),
         "ubicacion": str(row.get("Ubicación") or ""),
         "fecha_gps": fecha_gps(row),
+        "operador": operador_json(row, operadores),
     }
 
 
 def construir_respuesta_estatus(
-    centro_operativo: str, results: list[dict[str, Any]], now_mx: datetime
+    centro_operativo: str,
+    results: list[dict[str, Any]],
+    now_mx: datetime,
+    operadores: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    unidades = [unidad_a_json(row) for row in results]
+    unidades = [unidad_a_json(row, operadores) for row in results]
     resumen = {clave: 0 for clave in CLAVES_RESUMEN.values()}
     for unidad in unidades:
         clave = CLAVES_RESUMEN.get(unidad["estatus"])
@@ -298,11 +323,19 @@ def calcular_estatus(centro_operativo: str) -> dict[str, Any]:
     zona = pytz.timezone(config.get("zona_horaria", envio.DEFAULT_TIMEZONE))
     now_mx = datetime.now(zona)
     contexto = envio.preparar_contexto_samsara(config)
-    # Google Sheets solo aporta columnas del Excel; no se consulta para la API.
+    # El operador sale de la asignacion de Samsara mas reciente (24 h); Google Sheets solo
+    # aporta columnas del Excel y no se consulta para la API.
+    reporte = {**reporte, "enriquecer_operadores_samsara": True, "operadores_ventana_horas": 24}
     results, _, _ = envio.generar_resultados_reporte(
         contexto, reporte, now_mx, enriquecer_google_sheets=False
     )
-    return construir_respuesta_estatus(nombre, results, now_mx)
+    try:
+        operadores = catalogo_unidades.operadores_con_cache()
+    except Exception:
+        # Sin TMW el estatus sigue saliendo; el operador queda solo con el usuario de Samsara.
+        logging.exception("No se pudo leer el catalogo de operadores de TMW")
+        operadores = {}
+    return construir_respuesta_estatus(nombre, results, now_mx, operadores)
 
 
 def _candado(clave: str) -> threading.Lock:

@@ -375,7 +375,12 @@ url.searchParams.set("<span class="s">centro_operativo</span>", "<span class="s"
       "tiempo_minutos": 1435,
       "coordenadas": { "latitud": 19.631638, "longitud": -99.17491 },
       "ubicacion": "Avenida Independencia, Tultitlán, MEX, 54915",
-      "fecha_gps": "2026-10-05 11:29:41"
+      "fecha_gps": "2026-10-05 11:29:41",
+      "operador": {
+        "id": "LOZABN",
+        "nombre": "ABNER URIEL LOZANO ALMAZAN",
+        "telefono": "5512345676"
+      }
     },
     {
       "unidad": "1944",
@@ -383,7 +388,8 @@ url.searchParams.set("<span class="s">centro_operativo</span>", "<span class="s"
       "tiempo_minutos": null,
       "coordenadas": { "latitud": 19.939357, "longitud": -98.97107 },
       "ubicacion": "Autopista Arco Norte, Tolcayuca, HID, 55680",
-      "fecha_gps": "2026-10-05 11:29:58"
+      "fecha_gps": "2026-10-05 11:29:58",
+      "operador": null
     }
   ]
 }</pre>
@@ -404,6 +410,10 @@ url.searchParams.set("<span class="s">centro_operativo</span>", "<span class="s"
             <tr><td><code>unidades[].coordenadas</code></td><td>objeto o <code>null</code></td><td><code>latitud</code> y <code>longitud</code> en grados decimales (WGS84). <code>null</code> si no hay posición.</td></tr>
             <tr><td><code>unidades[].ubicacion</code></td><td>texto</td><td>Dirección aproximada de la última posición.</td></tr>
             <tr><td><code>unidades[].fecha_gps</code></td><td>texto o <code>null</code></td><td>Hora en que el GPS reportó esa posición, en hora del centro de México (<code>AAAA-MM-DD HH:MM:SS</code>). Una unidad detenida con el motor apagado reporta con menos frecuencia, así que su <code>fecha_gps</code> puede ser anterior: la posición sigue siendo la última conocida.</td></tr>
+            <tr><td><code>unidades[].operador</code></td><td>objeto o <code>null</code></td><td>Operador asignado a la unidad en las últimas 24 horas. <code>null</code> si no tiene asignación.</td></tr>
+            <tr><td><code>unidades[].operador.id</code></td><td>texto</td><td>Clave del operador.</td></tr>
+            <tr><td><code>unidades[].operador.nombre</code></td><td>texto</td><td>Nombre completo. Si no está en el catálogo de operadores, trae la clave.</td></tr>
+            <tr><td><code>unidades[].operador.telefono</code></td><td>texto o <code>null</code></td><td>Teléfono del operador, solo dígitos. Algunos tienen 8 dígitos (sin lada). <code>null</code> si no está registrado.</td></tr>
           </tbody>
         </table>
       </div>

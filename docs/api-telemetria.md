@@ -45,7 +45,8 @@ Respuesta de un centro:
       "tiempo_minutos": 1435,
       "coordenadas": {"latitud": 19.631638, "longitud": -99.17491},
       "ubicacion": "Avenida Independencia, Tultitlán, MEX, 54915",
-      "fecha_gps": "2026-10-05 11:29:41"
+      "fecha_gps": "2026-10-05 11:29:41",
+      "operador": {"id": "LOZABN", "nombre": "ABNER URIEL LOZANO ALMAZAN", "telefono": "5512345676"}
     }
   ]
 }
@@ -59,6 +60,12 @@ Respuesta de un centro:
 - `fecha_gps` es la hora de la lectura de donde salen las coordenadas (Samsara, o Logitrack si
   la unidad se rescató con Logitrack). Una unidad apagada deja de reportar, así que en las
   detenidas puede tener varios minutos o más: la posición sigue siendo la última conocida.
+- `operador` es el conductor (no pasajero) más reciente que Samsara asignó a la unidad en las
+  últimas 24 h; `null` si no hubo asignación. Su usuario en Samsara es el `mpp_id` de
+  `manpowerprofile` en TMW, de donde salen el nombre completo y el `telefono`
+  (`mpp_currentphone`, solo dígitos; algunos tienen 8 dígitos, sin lada). Si el usuario no existe
+  en TMW, o TMW no responde, `nombre` es el usuario de Samsara y `telefono` es `null`. El
+  catálogo de operadores se lee cada `TELEMETRIA_CACHE_UNIDADES_SEGUNDOS` (600).
 - Las unidades omitidas por patio, geocerca o GPS viejo no aparecen, igual que en el reporte.
 
 | Código | Significado |

@@ -1,12 +1,14 @@
-"""Catalogo de unidades (tractores) de TMWSuite: numero, division, flota y placas.
+"""Catalogos de TMWSuite: unidades (tractores) y operadores (manpowerprofile).
 
-Lo usa api_telemetria.py (GET /telemetria/consultarUnidades). Solo lectura: una consulta fija,
-sin datos del cliente en el SQL; los filtros se aplican en memoria sobre el catalogo en cache.
+Lo usa api_telemetria.py (GET /telemetria/consultarUnidades y el operador de consultarEstatus).
+Solo lectura: consultas fijas, sin datos del cliente en el SQL; los filtros se aplican en
+memoria sobre el catalogo en cache.
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any
@@ -42,8 +44,22 @@ WHERE tp.trc_number <> 'UNKNOWN'
 ORDER BY tp.trc_number
 """
 
+# El usuario del conductor en Samsara es el mpp_id de TMW.
+CONSULTA_OPERADORES = """
+SELECT
+    UPPER(LTRIM(RTRIM(mpp_id))) AS mpp_id,
+    LTRIM(RTRIM(mpp_firstname)) AS nombre,
+    LTRIM(RTRIM(mpp_middlename)) AS segundo_nombre,
+    LTRIM(RTRIM(mpp_lastname)) AS apellido,
+    LTRIM(RTRIM(mpp_currentphone)) AS telefono
+FROM [TMWSuite].dbo.manpowerprofile
+WHERE NULLIF(LTRIM(RTRIM(mpp_id)), '') IS NOT NULL
+"""
+
 _cache: dict[str, Any] = {"momento": None, "unidades": []}
 _candado = threading.Lock()
+_cache_operadores: dict[str, Any] = {"momento": None, "operadores": {}}
+_candado_operadores = threading.Lock()
 
 
 def _driver_sql() -> str:
@@ -118,6 +134,42 @@ def unidades_con_cache() -> list[dict[str, Any]]:
         _cache.update(momento=time.monotonic(), unidades=unidades)
         logging.info("Catalogo de unidades leido de SQL: %s unidades", len(unidades))
         return unidades
+
+
+def limpiar_telefono(valor: Any) -> str | None:
+    """Solo digitos; algunos vienen con espacios o sin lada (8 digitos) y se dejan asi."""
+    digitos = re.sub(r"\D", "", _texto(valor))
+    return digitos or None
+
+
+def leer_operadores() -> dict[str, dict[str, Any]]:
+    """mpp_id -> {"nombre", "telefono"}."""
+    with conectar() as conexion:
+        cursor = conexion.cursor()
+        cursor.execute(CONSULTA_OPERADORES)
+        columnas = [c[0] for c in cursor.description]
+        filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    operadores = {}
+    for fila in filas:
+        partes = (fila["nombre"], fila["segundo_nombre"], fila["apellido"])
+        operadores[_texto(fila["mpp_id"])] = {
+            "nombre": " ".join(_texto(p) for p in partes if _texto(p)),
+            "telefono": limpiar_telefono(fila["telefono"]),
+        }
+    return operadores
+
+
+def operadores_con_cache() -> dict[str, dict[str, Any]]:
+    """Operadores de TMW; se vuelven a leer cada TELEMETRIA_CACHE_UNIDADES_SEGUNDOS (600)."""
+    ttl = int(os.getenv("TELEMETRIA_CACHE_UNIDADES_SEGUNDOS", CACHE_SEGUNDOS_DEFAULT))
+    with _candado_operadores:
+        momento = _cache_operadores["momento"]
+        if momento is not None and time.monotonic() - momento < ttl:
+            return _cache_operadores["operadores"]
+        operadores = leer_operadores()
+        _cache_operadores.update(momento=time.monotonic(), operadores=operadores)
+        logging.info("Catalogo de operadores leido de SQL: %s operadores", len(operadores))
+        return operadores
 
 
 def filtrar_unidades(
