@@ -247,5 +247,12 @@ Invoke-RestMethod "http://127.0.0.1:8010/telemetria/consultarEstatus?centro_oper
    ```
 
 El log queda en `api_telemetria.log` (rota a 5 MB y conserva 5 archivos). Después de un
-`git pull`, reinicie la tarea para cargar el código nuevo. Revise en el log los avisos
+`git pull`, reinicie la tarea para cargar el código nuevo. IIS sirve una copia de la
+documentación, no la del repo: si cambió `deploy\iis\documentacion`, vuelva a copiarla:
+
+```powershell
+Copy-Item "C:\Users\Administrator\source\repos\Unidades-1\deploy\iis\documentacion\*" `
+  "C:\inetpub\api-telemetria\documentacion\" -Recurse -Force
+```
+ Revise en el log los avisos
 `Clave invalida desde` y `bloqueada`: muchas apariciones indican que alguien está probando claves.
